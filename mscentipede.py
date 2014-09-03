@@ -147,7 +147,7 @@ class Eta():
         else:
             self.estim = self.estim / np.log(10)
 
-    def update_Estep(self, cascade, scores, B, pi, gamma, omega, \
+    def update(self, cascade, scores, B, pi, gamma, omega, \
         alpha, beta, tau, B_null, gamma_null=None, omega_null=None): 
 
         footprint_logodds = np.zeros((self.N,1),dtype=float)
@@ -195,7 +195,7 @@ class Gamma(Cascade):
         self.background = background
         self.update_count = 0
 
-    def update_Estep(self, cascade, eta, B, pi, omega, \
+    def update(self, cascade, eta, B, pi, omega, \
         B_null, gamma_null=None, omega_null=None):
 
         lhoodA, lhoodB, lhoodC = likelihoodAB(cascade, B, omega, \
@@ -219,7 +219,7 @@ class Pi:
             for j in xrange(self.J)])
         self.update_count = 0
 
-    def update_Mstep(self, gamma):
+    def update(self, gamma):
 
         self.estim = np.array([gamma.value[j].sum() / gamma.value[j].size \
             for j in xrange(self.J)])
