@@ -1,12 +1,48 @@
 import numpy as np
 import cvxopt as cvx
 from cvxopt import solvers
-from scipy.special import digamma, gammaln
-from utils import insum, outsum, nplog, EPS, MAX
+from scipy.special import digamma, gammaln, polygamma
 import time, math, pdb
 
-oldlogistic = lambda x: 1./(1+insum(np.exp(x),[1]))
+# defining some constants
+EPS = np.finfo(np.double).tiny
+MAX = np.finfo(np.double).max
+
+# defining some simple functions
 logistic = lambda x: 1./(1+np.exp(x))
+insum = lambda x,axes: np.apply_over_axes(np.sum,x,axes)
+
+def outsum(arr):
+    """Summation over the first axis, without changing length of shape.
+
+    Arguments
+        arr : array
+
+    Returns
+        thesum : array
+
+    .. note::
+        This implementation is much faster than `numpy.sum`.
+
+    """
+
+    thesum = sum([a for a in arr])
+    shape = [1]
+    shape.extend(list(thesum.shape))
+    thesum = thesum.reshape(tuple(shape))
+    return thesum
+
+def nplog(x):
+    """Compute the natural logarithm, handling very
+    small floats appropriately.
+
+    """
+    try:
+        x[x<EPS] = EPS
+    except TypeError:
+        x = max([x,EPS])
+    return np.log(x)
+
 
 class Cascade:
 
@@ -189,61 +225,96 @@ class Pi:
             for j in xrange(self.J)])
         self.update_count += 1
 
-# change optimizer
+
 class Bin(Cascade):
 
-    def __init__(self, L, background='multinomial'):
+    def __init__(self, L):
 
         Cascade.__init__(self, np.random.rand(1,L))
         self.value = dict([(j,np.random.rand(2**j)) for j in xrange(self.J)])
-        self.background = background
         self.update_count = 0
 
-    def update_Mstep(self, cascade, eta, gamma, omega):
+    def update(self, cascade, eta, gamma, omega):
 
-        def F(x):
-            func = 0
+        def function(x, kwargs):
+            cascade = kwargs['cascade']
+            eta = kwargs['eta']
+            gamma = kwargs['gamma']
+            omega = kwargs['omega']
+
+            F = 0
             for j in xrange(self.J):
                 left = 2**j-1
                 right = 2**(j+1)-1
-                func = func + ((1-gamma.value[j])*np.sum(eta.estim[:,1:]*outsum([gammaln(cascade.value[j][r]+omega.estim[j]*x[left:right]) \
-                    + gammaln(cascade.total[j][r]-cascade.value[j][r]+omega.estim[j]*(1-x[left:right])) \
-                    - gammaln(omega.estim[j]*x[left:right]) - gammaln(omega.estim[j]*(1-x[left:right])) for r in xrange(cascade.R)])[0],0)).sum()
-            f = -1.*func
-            if np.isnan(f) or np.isinf(f):
-                return np.inf
-            else:
-                return f
+                func = np.zeros(cascade.value[j][0].shape, dtype=float)
+                for r in xrange(cascade.R):
+                    func += gammaln(cascade.value[j][r] + omega.estim[j] * x[left:right]) \
+                        + gammaln(cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
+                        - gammaln(omega.estim[j] * x[left:right]) - gammaln(omega.estim[j] * (1 - x[left:right]))
+                F += -1. * np.sum((1 - gamma.value[j]) * np.sum(eta.estim[:,1:] * func,0))
+            return F
 
-        def Fprime(x):
-            df = np.zeros(x.shape, dtype=float)
+        def gradient(x, kwargs):
+            cascade = kwargs['cascade']
+            eta = kwargs['eta']
+            gamma = kwargs['gamma']
+            omega = kwargs['omega']
+
+            Df = np.zeros(x.shape, dtype=float)
             for j in xrange(self.J):
                 left = 2**j-1
                 right = 2**(j+1)-1
-                df[left:right] = (1-gamma.value[j])*omega.estim[j]*np.sum(eta.estim[:,1:]*outsum([digamma(cascade.value[j][r]+omega.estim[j]*x[left:right]) \
-                    - digamma(cascade.total[j][r]-cascade.value[j][r]+omega.estim[j]*(1-x[left:right])) \
-                    - digamma(omega.estim[j]*x[left:right]) + digamma(omega.estim[j]*(1-x[left:right])) for r in xrange(cascade.R)])[0],0)
-            Df = -1.*df.ravel()
-            if np.isnan(Df).any() or np.isinf(Df).any():
-                return np.inf*np.ones(x.shape,dtype=float)
-            else:
-                return Df
+                df = np.zeros(cascade.value[j][0].shape, dtype=float)
+                for r in xrange(cascade.R):
+                    df = digamma(cascade.value[j][r] + omega.estim[j] * x[left:right]) \
+                    - digamma(cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
+                    - digamma(omega.estim[j] * x[left:right]) + digamma(omega.estim[j] * (1 - x[left:right]))
+                Df[left:right] = -1. * (1 - gamma.value[j]) * omega.estim[j] * np.sum(eta.estim[:,1:] * func,0)
+            return Df
 
+        def hessian(x, kwargs):
+            cascade = kwargs['cascade']
+            eta = kwargs['eta']
+            gamma = kwargs['gamma']
+            omega = kwargs['omega']
+
+            hess = np.zeros(x.shape, dtype=float)
+            for j in xrange(self.J):
+                left = 2**j-1
+                right = 2**(j+1)-1
+                hf = np.zeros(cascade.value[j][0].shape, dtype=float)
+                for r in xrange(cascade.R):
+                    hf = polygamma(1, cascade.value[j][r] + omega.estim[j] * x[left:right]) \
+                    + polygamma(1, cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
+                    - polygamma(1, omega.estim[j] * x[left:right]) - polygamma(1, omega.estim[j] * (1 - x[left:right]))
+                Hf[left:right] = -1. * (1 - gamma.value[j]) * omega.estim[j]**2 * np.sum(eta.estim[:,1:] * func,0)
+            
+            Hf = np.diag(hess)
+            return Hf
+
+        # initialize, and set constraints
         xo = np.array([v for j in xrange(self.J) for v in self.value[j]])
-        bounds = [(0, 1) for i in xrange(xo.size)]
-        solution = opt.fmin_tnc(F, xo, fprime=Fprime, bounds=bounds, disp=0)
-        if solution[2] not in [1,2]:
-            print "Run SLSQP"
-            solution = opt.fmin_slsqp(F, xo, fprime=Fprime, bounds=bounds, disp=0)
-        else:
-            solution = solution[0]
-        self.value = dict([(j,solution[2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
+        G = np.vstack((np.diag(-1*np.ones(xo.shape, dtype=float)), \
+                np.diag(np.ones(xo.shape, dtype=float))))
+        h = np.vstack((np.zeros((xo.size,1), dtype=float), \
+                np.ones((xo.size,1), dtype=float)))
 
-    self.update_count += 1
-    print "Bin updated %d"%self.update_count
+        # call optimizer
+        x_final = optimizer(xo, function, gradient, hessian, \
+            G=G, h=h, cascade=cascade, eta=eta, gamma=gamma, omega=omega)
+
+        if np.isnan(x_final).any():
+            print "Nan in Bin"
+            raise ValueError
+
+        if np.isinf(x_final).any():
+            print "Inf in Bin"
+            raise ValueError
+
+        self.value = dict([(j,x_final[2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
+        self.update_count += 1
 
 
-# change optimizer
 class Omega():
 
     def __init__(self, J):
@@ -252,56 +323,121 @@ class Omega():
         self.estim = 10*np.random.rand(self.J)
         self.update_count = 0
 
-    def update_Mstep(self, cascade, eta, gamma, B):
+    def update(self, cascade, eta, gamma, B):
 
-        def F(x):
-            func = 0
+        def function(x, kwargs):
+            cascade = kwargs['cascade']
+            eta = kwargs['eta']
+            gamma = kwargs['gamma']
+            B = kwargs['B']
+
+            func = 0.
+            # loop over each scale
             for j in xrange(gamma.J):
-                func = func + (gamma.value[j]*np.sum(eta.estim[:,1:]*outsum([gammaln(cascade.value[j][r]+0.5*x[j]) \
-                    + gammaln(cascade.total[j][r]-cascade.value[j][r]+0.5*x[j]) \
-                    - gammaln(cascade.total[j][r]+x[j]) + gammaln(x[j]) \
-                    - 2*gammaln(0.5*x[j]) for r in xrange(cascade.R)])[0],0) \
-                    + (1-gamma.value[j])*np.sum(eta.estim[:,1:]*outsum([gammaln(cascade.value[j][r]+B.value[j]*x[j]) \
-                    + gammaln(cascade.total[j][r]-cascade.value[j][r]+(1-B.value[j])*x[j]) \
-                    - gammaln(cascade.total[j][r]+x[j]) + gammaln(x[j]) \
-                    - gammaln(B.value[j]*x[j]) - gammaln((1-B.value[j])*x[j]) for r in xrange(cascade.R)])[0],0)).sum()
-            f = -1.*func.sum()
-            if np.isnan(f) or np.isinf(f):
-                return np.inf
-            else:
-                return f
 
-        def Fprime(x):
-            df = np.zeros(x.shape,dtype=float)
+                f = np.zeros(cascade.value[j].shape, dtype=float)
+                # contribution of the ``smooth`` state; loop over replicates
+                for r in xrange(cascade.R):
+                    f += gammaln(cascade.value[j][r] + 0.5 * x[j]) \
+                        + gammaln(cascade.total[j][r] - cascade.value[j][r] + 0.5 * x[j]) \
+                        - gammaln(cascade.total[j][r] + x[j]) + gammaln(x[j]) \
+                        - 2 * gammaln(0.5 * x[j])
+                func += np.sum(gamma.value[j] * np.sum(eta.estim[:,1:] * f,0))
+
+                f = np.zeros(cascade.value[j].shape, dtype=float)
+                # contribution of the ``non-smooth`` state; loop over replicates
+                for r in xrange(cascade.R):
+                    f += gammaln(cascade.value[j][r] + B.value[j] * x[j]) \
+                        + gammaln(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
+                        - gammaln(cascade.total[j][r] + x[j]) + gammaln(x[j]) \
+                        - gammaln(B.value[j] * x[j]) - gammaln((1 - B.value[j]) * x[j])
+                func += np.sum((1 - gamma.value[j]) * np.sum(eta.estim[:,1:] * f,0))
+
+            F = -1.*func.sum()
+            return F
+
+        def gradient(x, kwargs):
+            cascade = kwargs['cascade']
+            eta = kwargs['eta']
+            gamma = kwargs['gamma']
+            B = kwargs['B']
+
+            Df = np.zeros(x.shape, dtype=float)
+            # loop over each scale
             for j in xrange(gamma.J):
-                dfj = 0.5*gamma.value[j]*np.sum(eta.estim[:,1:]*outsum([digamma(cascade.value[j][r]+0.5*x[j]) \
-                    + digamma(cascade.total[j][r]-cascade.value[j][r]+0.5*x[j]) \
-                    - 2*digamma(cascade.total[j][r]+x[j]) + 2*digamma(x[j]) \
-                    - 2*digamma(0.5*x[j]) for r in xrange(cascade.R)])[0],0) \
-                    + (1-gamma.value[j])*np.sum(eta.estim[:,1:]*outsum([B.value[j]*digamma(cascade.value[j][r]+B.value[j]*x[j]) \
-                    + (1-B.value[j])*digamma(cascade.total[j][r]-cascade.value[j][r]+(1-B.value[j])*x[j]) \
-                    - digamma(cascade.total[j][r]+x[j]) + digamma(x[j]) \
-                    - B.value[j]*digamma(B.value[j]*x[j]) - (1-B.value[j])*digamma((1-B.value[j])*x[j]) for r in xrange(cascade.R)])[0],0)
-                df[j] = dfj.sum()
-            Df = -1*df
-            if np.isnan(Df).any() or np.isinf(Df).any():
-                return np.inf*np.ones(Df.shape,dtype=float)
-            else:
-                return Df
 
-        xo = self.estim
-        bounds = [(0, np.inf) for i in xrange(xo.size)]
-        solution = opt.fmin_tnc(F, xo, fprime=Fprime, bounds=bounds, disp=0)
-        if solution[2] not in [1,2]:
-            solution = opt.fmin_tnc(F, np.random.rand(xo.size), fprime=Fprime, bounds=bounds, disp=0)
-        print (solution[2], opt.tnc.RCSTRINGS[solution[2]])
-        self.estim = solution[0]
+                f = np.zeros(cascade.value[j].shape, dtype=float)
+                # contribution of the ``smooth`` state; loop over replicates
+                for r in xrange(cascade.R):
+                    f += 0.5 * digamma(cascade.value[j][r] + 0.5 * x[j]) \
+                        + 0.5 * digamma(cascade.total[j][r] - cascade.value[j][r] + 0.5 * x[j]) \
+                        - digamma(cascade.total[j][r] + x[j]) + digamma(x[j]) \
+                        - digamma(0.5 * x[j])
+                Df[j] = -1 * np.sum(gamma.value[j] * np.sum(eta.estim[:,1:] * f,0))
+
+                f = np.zeros(cascade.value[j].shape, dtype=float)
+                # contribution of the ``non-smooth`` state; loop over replicates
+                for r in xrange(cascade.R):
+                    f += B.value[j] * digamma(cascade.value[j][r] + B.value[j] * x[j]) \
+                        + (1 - B.value[j]) * digamma(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
+                        - digamma(cascade.total[j][r] + x[j]) + digamma(x[j]) \
+                        - B.value[j] * digamma(B.value[j] * x[j]) - (1 - B.value[j]) * digamma((1 - B.value[j]) * x[j])
+                Df[j] += -1 * np.sum((1 - gamma.value[j]) * np.sum(eta.estim[:,1:] * f,0))
+
+            return Df
+
+        def hessian(x, kwargs):
+            cascade = kwargs['cascade']
+            eta = kwargs['eta']
+            gamma = kwargs['gamma']
+            B = kwargs['B']
+
+            hess = np.zeros(x.shape, dtype=float)
+            for j in xrange(gamma.J):
+
+                f = np.zeros(cascade.value[j].shape, dtype=float)
+                # contribution of the ``smooth`` state; loop over replicates
+                for r in xrange(cascade.R):
+                    f += 0.25 * polygamma(1, cascade.value[j][r] + 0.5 * x[j]) \
+                        + 0.25 * polygamma(1, cascade.total[j][r] - cascade.value[j][r] + 0.5 * x[j]) \
+                        - polygamma(1, cascade.total[j][r] + x[j]) + polygamma(1, x[j]) \
+                        - 0.5 * polygamma(1, 0.5 * x[j])
+                hess[j] = -1 * np.sum(gamma.value[j] * np.sum(eta.estim[:,1:] * f,0))
+
+                f = np.zeros(cascade.value[j].shape, dtype=float)
+                # contribution of the ``non-smooth`` state; loop over replicates
+                for r in xrange(cascade.R):
+                    f += B.value[j]**2 * polygamma(1, cascade.value[j][r] + B.value[j] * x[j]) \
+                        + (1 - B.value[j])**2 * polygamma(1, cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
+                        - polygamma(1, cascade.total[j][r] + x[j]) + polygamma(1, x[j]) \
+                        - B.value[j]**2 * polygamma(1, B.value[j] * x[j]) \
+                        - (1 - B.value[j])**2 * polygamma(1, (1 - B.value[j]) * x[j])
+                hess[j] += -1 * np.sum((1 - gamma.value[j]) * np.sum(eta.estim[:,1:] * f,0))
+
+            Hf = np.diag(hess)
+            return Hf
+
+        # set constraints
+        G = np.diag(-1 * np.ones(xo.shape, dtype=float))
+        h = np.zeros((xo.size,1), dtype=float)
+
+        # call optimizer
+        xo = self.estim.copy()
+        x_final = optimizer(xo, function, gradient, hessian, \
+            G=G, h=h, cascade=cascade, eta=eta, gamma=gamma, B=B)
+        self.estim = x_final.reshape(self.estim.shape)
+
+        if np.isnan(self.estim).any():
+            print "Nan in Omega"
+            raise ValueError
+
+        if np.isinf(self.estim).any():
+            print "Inf in Omega"
+            raise ValueError
+
         self.update_count += 1
 
-    print "Omega updated %d"%self.update_count
 
-
-# change optimizer
 class Alpha():
 
     def __init__(self, R=1):
@@ -310,34 +446,58 @@ class Alpha():
         self.estim = np.random.rand(self.R,2)*10
         self.update_count = 0
 
-    def update_Mstep(self, eta, tau):
+    def update(self, eta, tau):
 
-        C = [nplog(tau.estim[r]) * outsum(eta.estim)[0] \
-            for r in xrange(self.R)]
+        def function(x, kwargs):
+            eta = kwargs['eta']
+            tau = kwargs['tau']
+            constant = kwargs['constant']
 
-        def F(x):
-            func = np.array([outsum(gammaln(eta.total[:,r:r+1]+x[2*r:2*r+2])*eta.estim) \
-                - gammaln(x[2*r:2*r+2])*outsum(eta.estim)[0] + C[r]*x[2*r:2*r+2] for r in xrange(self.R)])
+            etaestim = outsum(eta.estim)
+            func = np.array([outsum(gammaln(eta.total[:,r:r+1] + x[2*r:2*r+2]) * eta.estim) \
+                    - gammaln(x[2*r:2*r+2]) * etaestim[0] + constant[r] * x[2*r:2*r+2] \
+                    for r in xrange(tau.R)])
             f = -1.*func.sum()
-            if np.isnan(f) or np.isinf(f):
-                return np.inf
-            else:
-                return f
+            return f
 
-        def Fprime(x):
-            df = np.array([outsum(digamma(eta.total[:,r:r+1]+x[2*r:2*r+2])*eta.estim) \
-                - digamma(x[2*r:2*r+2])*outsum(eta.estim)[0] + C[r] for r in xrange(self.R)])
-            Df = -1.*df.ravel()
-            if np.isnan(Df).any() or np.isinf(Df).any():
-                return np.inf*np.ones(x.shape,dtype=float)
-            else:
-                return Df
+        def gradient(x, kwargs):
+            eta = kwargs['eta']
+            tau = kwargs['tau']
+            etaestim = kwargs['etaestim']
+            constant = kwargs['constant']
 
+            df = []
+            for r in xrange(tau.R):
+                df.append(outsum(digamma(eta.total[:,r:r+1] + x[2*r:2*r+2]) * eta.estim)[0] \
+                    - digamma(x[2*r:2*r+2]) * etaestim[0] + constant[r])
+            Df = -1. * np.hstack(df)
+            return Df
+
+        def hessian(x, kwargs):
+            eta = kwargs['eta']
+            tau = kwargs['tau']
+            etaestim = kwargs['etaestim']
+            constant = kwargs['constant']
+            
+            hess = []
+            for r in xrange(tau.R):
+                hess.append(outsum(polygamma(1, eta.total[:,r:r+1] + x[2*r:2*r+2]) * eta.estim)[0] \
+                    - polygamma(1, x[2*r:2*r+2]) * etaestim[0])
+            Hf = -1. * np.diag(np.hstack(hess))
+            return Hf
+
+        const = [nplog(tau.estim[r]) * outsum(eta.estim)[0] for r in xrange(self.R)]
+        etaestim = outsum(eta.estim)
         xo = self.estim.ravel()
-        bounds = [(0, None) for i in xrange(xo.size)]
-        solution = opt.fmin_l_bfgs_b(F, xo, fprime=Fprime, bounds=bounds, disp=0)
-        self.estim = solution[0].reshape(self.R,2)
-        print (solution[2]['warnflag'],solution[2]['task'])
+
+        # set constraints
+        G = np.diag(-1 * np.ones(xo.shape, dtype=float))
+        h = np.zeros((xo.size,1), dtype=float)
+
+        # call optimizer
+        x_final = optimizer(xo, function, gradient, hessian, \
+            G=G, h=h, tau=tau, eta=eta, constant=constant, etaestim=etaestim)
+        self.estim = x_final.reshape(self.estim.shape)
 
         if np.isnan(self.estim).any():
             print "Nan in Alpha"
@@ -359,7 +519,7 @@ class Tau():
         self.estim[:,1] = self.estim[:,1]/100
         self.update_count = 0
 
-    def update_Mstep(self, eta, alpha):
+    def update(self, eta, alpha):
 
         numerator = outsum(eta.estim)[0] * alpha.estim
         denominator = np.array([outsum(eta.estim * (estim + eta.total[:,r:r+1]))[0] \
@@ -376,7 +536,7 @@ class Tau():
 
         self.update_count += 1
 
-# change optimizer
+
 class Beta():
 
     def __init__(self, S):
@@ -385,30 +545,37 @@ class Beta():
         self.estim = np.random.rand(self.S)
         self.update_count = 0
 
-    def update_Mstep(self, scores, eta):
+    def update(self, scores, eta):
 
-        def F(x):
-            arg = x[0]+x[1]*scores
-            func = arg*insum(eta.estim[:,1:],1) - nplog(1+np.exp(arg))
-            f = -1.*func.sum()
-            if np.isnan(f) or np.isinf(f):
-                return np.inf
-            else:
-                return f
+        def function(x, kwargs):
+            scores = kwargs['scores']
+            eta = kwargs['eta']
 
-        def Fprime(x):
-            arg = x[0]+x[1]*scores
-            df1 = insum(eta.estim[:,1:],1) - oldlogistic(-arg)
-            df2 = df1*scores
-            Df = -1.*np.array([df1.sum(), df2.sum()])
-            if np.isnan(Df).any() or np.isinf(Df).any():
-                return np.inf
-            else:
-                return Df
+            arg = insum(x * scores,[1])
+            func = arg * eta.estim[:,1:] - nplog(1 + np.exp(arg))
+            f = -1. * func.sum()
+            return f
+
+        def gradient(x, kwargs):
+            scores = kwargs['scores']
+            eta = kwargs['eta']
+
+            arg = insum(x * scores,[1])
+            Df = -1 * np.sum(scores * (eta.estim[:,1:] - logistic(-arg)),0)
+            return Df
+
+        def hessian(x, kwargs):
+            scores = kwargs['scores']
+            eta = kwargs['eta']
+
+            arg = insum(x * scores,[1])
+            larg = scores * logistic(arg) * logistic(-arg)
+            Hf = np.dot(scores.T, larg)
+            return Hf
+
 
         xo = self.estim.copy()
-        solution = opt.fmin_bfgs(F, xo, fprime=Fprime, disp=0)
-        self.estim = solution
+        self.estim = optimizer(xo, function, gradient, hessian, scores=scores, eta=eta)
 
         if np.isnan(self.estim).any():
             print "Nan in Beta"
@@ -419,6 +586,58 @@ class Beta():
             raise ValueError
 
         self.update_count += 1        
+
+
+def optimizer(xo, function, gradient, hessian, **kwargs):
+
+    def F(x=None, z=None):
+
+        if x is None:
+            return 0, cvx.matrix(x_init)
+
+        xx = np.array(x).ravel().astype(np.float64)
+
+        # compute likelihood function
+        f = function(xx, kwargs)
+        if np.isnan(f) or np.isinf(f):
+            f = np.array([np.finfo('float32').max]).astype('float')
+        else:
+            f = np.array([f]).astype('float')
+        
+        # compute gradient
+        Df = gradient(xx, kwargs)
+        if np.isnan(Df).any() or np.isinf(Df).any():
+            Df = -1 * np.finfo('float32').max * np.ones((1,xx.size), dtype=float)
+        if z is None:
+            return cvx.matrix(f), cvx.matrix(Df)
+
+        # compute hessian
+        hess = hessian(xx, kwargs)
+        Hf = z[0] * hess
+        return cvx.matrix(f), cvx.matrix(Df), cvx.matrix(Hf)
+
+    # run the optimizer
+    optimized = False
+    V = xo.size
+    # warm start
+    x_init = xo.reshape(V,1)
+    while not optimized:
+        try:
+            if kwargs.has_key('G'):
+                solution = solvers.cp(F, G=kwargs['G'], h=kwargs['h'])
+            else:
+                solution = solvers.cp(F)
+            if solution['status']=='optimal':
+                optimized = True
+                x_final = np.array(solution['x']).ravel()
+            else:
+                # cold start
+                x_init = np.random.rand(V,1)
+        except ValueError:
+            # cold start
+            x_init = np.random.rand(V,1)
+
+    return x_final
 
 
 def likelihoodAB(cascade, B, omega, B_null, gamma_null=None, omega_null=None, background='multinomial'):
@@ -580,39 +799,32 @@ def EM(cascade, scores, eta, B, pi, gamma, omega, B_null, \
 
     # update binding posteriors
     if background=='multinomial':
-        eta.update_Estep(cascade, scores, B, pi, gamma, omega, \
+        eta.update(cascade, scores, B, pi, gamma, omega, \
             alpha, beta, tau, B_null)
     else:
-        eta.update_Estep(cascade, scores, B, pi, gamma, omega, \
+        eta.update(cascade, scores, B, pi, gamma, omega, \
             alpha, beta, tau, B_null, gamma_null=gamma_null, omega_null=omega_null)
 
     # update multi-scale latent variables
     if background=='multinomial':
-        gamma.update_Estep(cascade, eta, B, pi, omega, B_null)
+        gamma.update(cascade, eta, B, pi, omega, B_null)
     else:
-        gamma.update_Estep(cascade, eta, B, pi, omega, B_null, \
+        gamma.update(cascade, eta, B, pi, omega, B_null, \
             gamma_null=gamma_null, omega_null=omega_null)
 
     # update multi-scale parameters
-    pi.update_Mstep(gamma)
-    B.update_Mstep(cascade, eta, gamma, omega)
+    pi.update(gamma)
+    B.update(cascade, eta, gamma, omega)
 
     # update negative binomial parameters
-    tau.update_Mstep(eta, alpha)
-    alpha.update_Mstep(eta, tau)
+    tau.update(eta, alpha)
+    alpha.update(eta, tau)
 
     # update prior parameters
-    beta.update_Mstep(scores, eta)
+    beta.update(scores, eta)
 
 
-def infer(reads, totalreads, scores, background, background_model='multinomial', restarts=3, mintol=1.):
-
-    """
-    modelC -- Poisson-Binomial footprint model; flat background model
-    modelD -- Poisson-Binomial footprint model; multinomial background model
-    modelE -- Poisson-Binomial footprint model; Poisson-Binomial background model
-    modelF -- Poisson-Binomial footprint model; site-specific multinomial model
-    """
+def infer(reads, totalreads, scores, background, background_model='multinomial', restarts=3, mintol=1e-2):
 
     (N,L,R) = reads.shape
     cascade = Cascade(reads)
@@ -707,8 +919,8 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
                             alpha, beta, tau, B_null, gamma_null=gamma_null, omega_null=omega_null)
 
                     tol = newLoglike - Loglike
-                    Loglike = Loglikenew
-                    print iter+1, Loglikenew, tol, time.time()-itertime
+                    Loglike = newLoglike
+                    print iter+1, newLoglike, tol, time.time()-itertime
                     itertime = time.time()
 
                 iter += 1
@@ -724,14 +936,14 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
                         footprint = (B, pi, gamma, omega, B_null)
                     elif model=='modelE':
                         footprint = (B, pi, gamma, omega, B_null, pi_null, gamma_null, omega_null)
-                    negbinparams = (alpha, tau)
+                    count_model = (alpha, tau)
                     prior = beta
 
         except ValueError as err:
 
             print "restarting inference"
 
-    return footprint, negbinparams, prior
+    return footprint_model, count_model, prior
 
 
 def decode(reads, totalreads, scores, background, footprint, negbinparams, prior, background_model='multinomial'):
