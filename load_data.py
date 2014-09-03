@@ -62,7 +62,7 @@ class BamFile():
     		left = center-width/2
     		right = center+width/2
 
-    		sam_iter = samfile.fetch(reference=chrom, start=left, end=right)
+    		sam_iter = self._handle.fetch(reference=chrom, start=left, end=right)
     		forward = np.zeros((width,), dtype=np.uint)
     		reverse = np.zeros((width,), dtype=np.uint)
 
