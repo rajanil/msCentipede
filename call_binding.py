@@ -1,14 +1,19 @@
 import numpy as np
+import cPickle
 import load_data
 import mscentipede
-import utils 
 import argparse
+import time, pdb
+#import genome.db
+
+#gdb = genome.db.GenomeDB(path="/data/internal/genome_db",assembly='hg19')
+#chromosomes = gdb.get_chromosomes(get_sex=False)
 
 def infer(options):
 
     # load motif sites
     motif_handle = load_data.ZipFile(options.motif_file)
-    locations = motif_handle.read(batch=options.batch)
+    locations = [loc for loc in motif_handle.read() if float(loc[4])>13]
     motif_handle.close()
     scores = np.array([loc[4:] for loc in locations]).astype('float')
 
@@ -16,6 +21,21 @@ def infer(options):
     bam_handles = [load_data.BamFile(bam_file) for bam_file in options.bam_files]
     count_data = np.array([bam_handle.get_read_counts(locations) for bam_handle in bam_handles])
     ig = [handle.close() for handle in bam_handles]
+
+    #fwd_track = gdb.open_track("encode_uw_dnase/Gm12878_Rep2_fwd")
+    #rev_track = gdb.open_track("encode_uw_dnase/Gm12878_Rep2_rev")
+    #fwd_dict = dict()
+    #rev_dict = dict()
+    #for chrom in chromosomes:
+    #    fwd_dict[chrom.name] = fwd_track.get_array(chrom)
+    #    rev_dict[chrom.name] = rev_track.get_array(chrom)
+
+    #count_data_check = np.array([np.hstack((fwd_dict[loc[0]][loc[1]-100:loc[1]+100], rev_dict[loc[0]][loc[1]-100:loc[1]+100])) if loc[3]=='+' \
+    #    else np.hstack((rev_dict[loc[0]][loc[2]-100:loc[2]+100][::-1], fwd_dict[loc[0]][loc[2]-100:loc[2]+100][::-1])) for loc in locations]) 
+    #fwd_track.close()
+    #rev_track.close()
+
+    #pdb.set_trace()   
 
     total_counts = np.sum(count_data, 2).T
     if options.window<200:
@@ -30,7 +50,7 @@ def infer(options):
             background_counts = bam_handle.get_read_counts(locations)
             bam_handle.close()
         else:
-            background_counts = np.ones((1,2*options.window), dtype=float)
+            background_counts = np.ones((1,2*options.window,1), dtype=float)
     else:
         bam_handle = load_data.BamFile(options.bam_file_genomicdna)
         background_counts = bam_handle.get_read_counts(locations)
@@ -69,11 +89,17 @@ def decode(options):
         if options.bam_file_genomicdna:
             bg_handle = load_data.BamFile(options.bam_file_genomicdna)
         else:
-            background_counts = np.ones((1,2*options.window), dtype=float)
+            background_counts = np.ones((1,2*options.window,1), dtype=float)
     else:
         bg_handle = load_data.BamFile(options.bam_file_genomicdna)
 
-    handle = gzip.open(options.posterior_file, "wb")
+    # check number of motif sites
+    pipe = load_data.subprocess.Popen("zcat %s | wc -l"%options.motif_file, \
+        stdout=load_data.subprocess.PIPE, shell=True)
+    Ns = int(pipe.communicate()[0].strip())
+    loops = Ns/options.batch+1
+
+    handle = load_data.gzip.open(options.posterior_file, "wb")
     header = ['Chr','Start','Stop','Strand','LogPosOdds','LogPriorOdds','MultLikeRatio','NegBinLikeRatio']
     handle.write('\t'.join(header)+'\n')
 
@@ -84,6 +110,8 @@ def decode(options):
         count_data = np.array([bam_handle.get_read_counts(locations) for bam_handle in bam_handles])
         total_counts = np.sum(count_data, 2).T
 
+        scores = np.array([loc[4:] for loc in locations]).astype('float')
+
         if options.window<200:
             counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
                 count[:,300-options.window/2:300+options.window/2])).T \
@@ -93,16 +121,17 @@ def decode(options):
         if options.bam_file_genomicdna:
             background_counts = bg_handle.get_read_counts(locations)
 
-        logodds = centipede.decode(counts, total_counts, scores, background_counts, \
+        logodds = mscentipede.decode(counts, total_counts, scores, background_counts, \
             footprint_model, count_model, prior, background_model=options.background_model)
 
         ignore = [loc.extend(['%.4f'%p for p in pos[:4]])
             for loc,pos in zip(locations,logodds)]
-        ignore = [handle.write('\t'.join(elem)+'\n') for elem in locations]
+        ignore = [handle.write('\t'.join(map(str,elem))+'\n') for elem in locations]
         print len(locations), time.time()-starttime
 
     handle.close()
-    bg_handle.close()
+    if options.bam_file_genomicdna:
+        bg_handle.close()
     ig = [handle.close() for handle in bam_handles]
 
 
@@ -113,10 +142,12 @@ def parse_args():
 
     parser.add_argument("--infer",
                         default=False,
+                        action='store_true',
                         help="call the subroutine to infer msCentipede model parameters")
 
     parser.add_argument("--decode",
                         default=False,
+                        action='store_true',
                         help="call the subroutine to compute binding posteriors, given "
                         "msCentipede model parameters")
 
@@ -155,7 +186,7 @@ def parse_args():
 
     parser.add_argument("--batch", 
                         type=int, 
-                        default=20000, 
+                        default=5000, 
                         help="number of motifs to use for learning model parameters; "
                         " also, number of motifs to decode at a time.")
 
@@ -171,6 +202,12 @@ def parse_args():
                         help="comma-separated list of bam files "
                         " from a chromatin accessibility assay ")
 
+    parser.add_argument("--bam_file_genomicdna",
+                        action="store",
+                        nargs="+",
+                        default=None,
+                        help="comma-separated list of bam files "
+                        " from a chromatin accessibility assay on genomic DNA")
 
     options = parser.parse_args()
 

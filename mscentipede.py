@@ -4,6 +4,9 @@ from cvxopt import solvers
 from scipy.special import digamma, gammaln, polygamma
 import time, math, pdb
 
+# suppress optimizer output
+solvers.options['show_progress'] = False
+
 # defining some constants
 EPS = np.finfo(np.double).tiny
 MAX = np.finfo(np.double).max
@@ -48,19 +51,19 @@ class Cascade:
 
     def __init__(self, reads=None):
 
-        if reads:
-            self.N, self.L, self.R = read.shape
-            self.J = math.frexp(self.L)[1]-1
-            self.value = dict()
-            self.total = dict()
-            self.transform(reads)
-        else:
+        if reads is None:
             self.N = 0
             self.L = 0
             self.R = 0
             self.J = 0
             self.value = dict()
             self.total = dict()
+        else:
+            self.N, self.L, self.R = reads.shape
+            self.J = math.frexp(self.L)[1]-1
+            self.value = dict()
+            self.total = dict()
+            self.transform(reads)
 
     def transform(self, profile):
 
@@ -99,7 +102,7 @@ class Cascade:
 
 class Eta():
 
-    def __init__(self, cascade, totalreads, scores, \
+    def __init__(self, cascade, totalreads, scores=None, \
         B_null=None, gamma_null=None, omega_null=None, \
         B=None, gamma=None, omega=None, pi=None, \
         beta=None, alpha=None, tau=None, background='multinomial'):
@@ -130,7 +133,7 @@ class Eta():
                     + (1 - gamma.value[j]) * (nplog(1 - pi.estim[j]) - nplog(1 - gamma.value[j]))) * cascade.R
 
             self.estim = np.zeros((self.N, 4),dtype=float)
-            self.estim[:,1:2] = beta.estim[0] + insum(beta.estim[1:] * scores,[1])
+            self.estim[:,1:2] = insum(beta.estim * scores, [1])
             self.estim[:,2:3] = footprint_logodds
             self.estim[:,3:4] = insum(gammaln(self.total + alpha.estim.T[1]) \
                 - gammaln(self.total + alpha.estim.T[0]) \
@@ -147,8 +150,10 @@ class Eta():
         else:
             self.estim = self.estim / np.log(10)
 
-    def update(self, cascade, scores, B, pi, gamma, omega, \
-        alpha, beta, tau, B_null, gamma_null=None, omega_null=None): 
+    def update(self, cascade, scores, \
+        B, pi, gamma, omega, \
+        alpha, beta, tau, \
+        B_null, gamma_null=None, omega_null=None): 
 
         footprint_logodds = np.zeros((self.N,1),dtype=float)
         if self.background=='multinomial':
@@ -158,12 +163,12 @@ class Eta():
                 gamma_null=gamma_null, omega_null=omega_null, background=self.background)
 
         for j in xrange(pi.J):
-                footprint_logodds += insum(gamma.value[j] * lhoodA.value[j] - lhoodC.value[j] \
-                    + (1 - gamma.value[j]) * lhoodB.value[j],[1])
-                footprint_logodds += np.sum(gamma.value[j] * (nplog(pi.estim[j]) - nplog(gamma.value[j])) \
-                    + (1 - gamma.value[j]) * (nplog(1 - pi.estim[j]) - nplog(1 - gamma.value[j]))) * cascade.R
+            footprint_logodds += insum(gamma.value[j] * lhoodA.value[j] - lhoodC.value[j] \
+                + (1 - gamma.value[j]) * lhoodB.value[j],[1])
+            footprint_logodds += np.sum(gamma.value[j] * (nplog(pi.estim[j]) - nplog(gamma.value[j])) \
+                + (1 - gamma.value[j]) * (nplog(1 - pi.estim[j]) - nplog(1 - gamma.value[j]))) * cascade.R
 
-        prior_logodds = beta.estim[0] + beta.estim[1]*scores
+        prior_logodds = insum(beta.estim * scores, [1])
         negbin_logodds = insum(gammaln(self.total + alpha.estim.T[1]) \
                 - gammaln(self.total + alpha.estim.T[0]) \
                 + gammaln(alpha.estim.T[0]) - gammaln(alpha.estim.T[1]) \
@@ -191,7 +196,11 @@ class Gamma(Cascade):
 
     def __init__(self, L, background='multinomial'):
 
-        Cascade.__init__(self, np.random.rand(1,L))
+        Cascade.__init__(self)
+        self.L = L
+        self.J = math.frexp(self.L)[1]-1
+        for j in xrange(self.J):
+            self.value[j] = np.random.rand(2**j)
         self.background = background
         self.update_count = 0
 
@@ -228,10 +237,12 @@ class Pi:
 
 class Bin(Cascade):
 
-    def __init__(self, L):
+    def __init__(self, J):
 
-        Cascade.__init__(self, np.random.rand(1,L))
-        self.value = dict([(j,np.random.rand(2**j)) for j in xrange(self.J)])
+        Cascade.__init__(self)
+        self.J = J
+        for j in xrange(self.J):
+            self.value[j] = np.random.rand(2**j)
         self.update_count = 0
 
     def update(self, cascade, eta, gamma, omega):
@@ -266,10 +277,10 @@ class Bin(Cascade):
                 right = 2**(j+1)-1
                 df = np.zeros(cascade.value[j][0].shape, dtype=float)
                 for r in xrange(cascade.R):
-                    df = digamma(cascade.value[j][r] + omega.estim[j] * x[left:right]) \
+                    df += digamma(cascade.value[j][r] + omega.estim[j] * x[left:right]) \
                     - digamma(cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
                     - digamma(omega.estim[j] * x[left:right]) + digamma(omega.estim[j] * (1 - x[left:right]))
-                Df[left:right] = -1. * (1 - gamma.value[j]) * omega.estim[j] * np.sum(eta.estim[:,1:] * func,0)
+                Df[left:right] = -1. * (1 - gamma.value[j]) * omega.estim[j] * np.sum(eta.estim[:,1:] * df,0)
             return Df
 
         def hessian(x, kwargs):
@@ -284,10 +295,10 @@ class Bin(Cascade):
                 right = 2**(j+1)-1
                 hf = np.zeros(cascade.value[j][0].shape, dtype=float)
                 for r in xrange(cascade.R):
-                    hf = polygamma(1, cascade.value[j][r] + omega.estim[j] * x[left:right]) \
+                    hf += polygamma(1, cascade.value[j][r] + omega.estim[j] * x[left:right]) \
                     + polygamma(1, cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
                     - polygamma(1, omega.estim[j] * x[left:right]) - polygamma(1, omega.estim[j] * (1 - x[left:right]))
-                Hf[left:right] = -1. * (1 - gamma.value[j]) * omega.estim[j]**2 * np.sum(eta.estim[:,1:] * func,0)
+                hess[left:right] = -1. * (1 - gamma.value[j]) * omega.estim[j]**2 * np.sum(eta.estim[:,1:] * hf,0)
             
             Hf = np.diag(hess)
             return Hf
@@ -418,11 +429,11 @@ class Omega():
             return Hf
 
         # set constraints
+        xo = self.estim.copy()
         G = np.diag(-1 * np.ones(xo.shape, dtype=float))
         h = np.zeros((xo.size,1), dtype=float)
 
         # call optimizer
-        xo = self.estim.copy()
         x_final = optimizer(xo, function, gradient, hessian, \
             G=G, h=h, cascade=cascade, eta=eta, gamma=gamma, B=B)
         self.estim = x_final.reshape(self.estim.shape)
@@ -486,7 +497,7 @@ class Alpha():
             Hf = -1. * np.diag(np.hstack(hess))
             return Hf
 
-        const = [nplog(tau.estim[r]) * outsum(eta.estim)[0] for r in xrange(self.R)]
+        constant = [nplog(tau.estim[r]) * outsum(eta.estim)[0] for r in xrange(self.R)]
         etaestim = outsum(eta.estim)
         xo = self.estim.ravel()
 
@@ -539,9 +550,9 @@ class Tau():
 
 class Beta():
 
-    def __init__(self, S):
+    def __init__(self, scores):
     
-        self.S = S
+        self.S = scores.shape[1]
         self.estim = np.random.rand(self.S)
         self.update_count = 0
 
@@ -608,6 +619,8 @@ def optimizer(xo, function, gradient, hessian, **kwargs):
         Df = gradient(xx, kwargs)
         if np.isnan(Df).any() or np.isinf(Df).any():
             Df = -1 * np.finfo('float32').max * np.ones((1,xx.size), dtype=float)
+        else:
+            Df = Df.reshape(1,xx.size)
         if z is None:
             return cvx.matrix(f), cvx.matrix(Df)
 
@@ -624,7 +637,7 @@ def optimizer(xo, function, gradient, hessian, **kwargs):
     while not optimized:
         try:
             if kwargs.has_key('G'):
-                solution = solvers.cp(F, G=kwargs['G'], h=kwargs['h'])
+                solution = solvers.cp(F, G=cvx.matrix(kwargs['G']), h=cvx.matrix(kwargs['h']))
             else:
                 solution = solvers.cp(F)
             if solution['status']=='optimal':
@@ -794,8 +807,18 @@ def bayes_optimal_estimator(cascade, eta, pi, B=None, mu=None, omega=None, gamma
     return M1, M2
 
 
-def EM(cascade, scores, eta, B, pi, gamma, omega, B_null, \
-    gamma_null=None, omega_null=None, background='multinomial'):
+def EM(cascade, scores, eta, \
+        B, pi, gamma, omega, \
+        alpha, beta, tau, \
+        B_null, gamma_null=None, omega_null=None, \
+        background='multinomial'):
+
+    # update multi-scale latent variables
+    if background=='multinomial':
+        gamma.update(cascade, eta, B, pi, omega, B_null)
+    else:
+        gamma.update(cascade, eta, B, pi, omega, B_null, \
+            gamma_null=gamma_null, omega_null=omega_null)
 
     # update binding posteriors
     if background=='multinomial':
@@ -805,16 +828,10 @@ def EM(cascade, scores, eta, B, pi, gamma, omega, B_null, \
         eta.update(cascade, scores, B, pi, gamma, omega, \
             alpha, beta, tau, B_null, gamma_null=gamma_null, omega_null=omega_null)
 
-    # update multi-scale latent variables
-    if background=='multinomial':
-        gamma.update(cascade, eta, B, pi, omega, B_null)
-    else:
-        gamma.update(cascade, eta, B, pi, omega, B_null, \
-            gamma_null=gamma_null, omega_null=omega_null)
-
     # update multi-scale parameters
-    pi.update(gamma)
     B.update(cascade, eta, gamma, omega)
+    omega.update(cascade, eta, gamma, B)
+    pi.update(gamma)
 
     # update negative binomial parameters
     tau.update(eta, alpha)
@@ -823,30 +840,88 @@ def EM(cascade, scores, eta, B, pi, gamma, omega, B_null, \
     # update prior parameters
     beta.update(scores, eta)
 
+def square_EM(cascade, scores, eta, \
+        B, pi, gamma, omega, \
+        alpha, beta, tau, \
+        B_null, gamma_null=None, omega_null=None, \
+        background='multinomial'):
+
+    parameters = [B, pi, omega, alpha, tau]
+    oldvar = []
+    for parameter in parameters:
+        try:
+            oldvar.append(parameter.estim.copy())
+        except AttributeError:
+            oldvar.append(np.hstack([parameter.value[j].copy() for j in xrange(parameter.J)]))
+    oldvars = [oldvar]
+
+    for step in [0,1]:
+        EM(cascade, scores, eta, B, pi, gamma, omega, \
+                alpha, beta, tau, \
+                B_null, gamma_null=gamma_null, omega_null=omega_null, \
+                background=background)
+        oldvar = []
+        for parameter in parameters:
+            try:
+                oldvar.append(parameter.estim.copy())
+            except AttributeError:
+                oldvar.append(np.hstack([parameter.value[j].copy() for j in xrange(parameter.J)]))
+        oldvars.append(oldvar)
+
+    R = [oldvars[1][j]-oldvars[0][j] for j in xrange(len(parameters))]
+    V = [oldvars[2][j]-oldvars[1][j]-R[j] for j in xrange(len(parameters))]
+    a = -1.*np.sqrt(np.sum([(r*r).sum() for r in R]) / np.sum([(v*v).sum() for v in V]))
+
+    if a>-1:
+        a = -1.
+
+    a_ok = False
+    while not a_ok:
+        invalid = np.zeros((0,), dtype='bool')
+        for parameter,varA,varB,varC in zip(parameters,oldvars[0],oldvars[1],oldvars[2]):
+            try:
+                parameter.estim = (1+a)**2*varA - 2*a*(1+a)*varB + a**2*varC
+                invalid = np.hstack((invalid,(parameter.estim<=0).ravel()))
+            except AttributeError:
+                newparam = (1+a)**2*varA - 2*a*(1+a)*varB + a**2*varC
+                invalid = np.hstack((invalid, np.logical_or(newparam<0, newparam>1)))
+                parameter.value = dict([(j,newparam[2**j-1:2**(j+1)-1]) \
+                    for j in xrange(self.J)])
+        if np.any(invalid):
+            a = (a-1)/2.
+            if np.abs(a+1)<1e-4:
+                a = -1.
+        else:
+            a_ok = True
+
+    EM(cascade, scores, eta, B, pi, gamma, omega, \
+                alpha, beta, tau, \
+                B_null, gamma_null=gamma_null, omega_null=omega_null, \
+                background=background)
 
 def infer(reads, totalreads, scores, background, background_model='multinomial', restarts=3, mintol=1e-2):
 
-    (N,L,R) = reads.shape
     cascade = Cascade(reads)
     cascade_null = Cascade(background)
+    scores = np.hstack((np.ones((cascade.N,1), dtype=float), scores))
     del reads
 
     # set background model
-    B_null = Bin(L, background=background_model)
-    if background=='multinomial':
+    B_null = Bin(cascade.J)
+    if background_model=='multinomial':
         
         for j in xrange(B_null.J):
-            B_null.value[j] = np.sum(cascade_null.value[j],1) / np.sum(cascade_null.total[j],1).astype('float')
+            B_null.value[j] = np.sum(cascade_null.value[j][0],0) / np.sum(cascade_null.total[j][0],0).astype('float')
 
     else:
         
-        Bg = Bin(L, background=background_model)
+        Bg = Bin(cascade.J)
         Bg.value = dict([(j,0.5*np.ones((2**j,))) for j in xrange(Bg.J)])
-        gamma_null = Gamma(L, background=background_model)
+        gamma_null = Gamma(cascade.L, background=background_model)
         pi_null = Pi(gamma_null)
-        omega_null = Omega(cascade_null.J, background=background_model)
+        omega_null = Omega(cascade_null.J)
 
-        eta_null = Eta(cascade_null, totalreads, scores)
+        eta_null = Eta(cascade_null, totalreads)
         eta_null.estim[:,1] = 1
         eta_null.estim[:,0] = 0
 
@@ -873,22 +948,24 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
 
         try:
             # initialize multi-scale model parameters
-            gamma = Gamma(L, background=background_model)
+            gamma = Gamma(cascade.L, background=background_model)
             pi = Pi(gamma)
-            B = Bin(L, background=background_model)
-            omega = Omega(cascade.J, background=background_model)
+            B = Bin(cascade.J)
+            omega = Omega(cascade.J)
 
             # initialize negative binomial parameters
-            alpha = Alpha(R=R)
-            tau = Tau(R=R)
+            alpha = Alpha(R=cascade.R)
+            tau = Tau(R=cascade.R)
 
             # initialize prior parameters
-            beta = Beta()
+            beta = Beta(scores)
 
             # initialize posterior over latent variables
-            eta = Eta(cascade, totalreads, scores)
+            eta = Eta(cascade, totalreads)
+            for j in xrange(B.J):
+                B.value[j] = np.sum(cascade.value[j][0]*eta.estim[:,1:],0) / np.sum(cascade.total[j][0]*eta.estim[:,1:],0).astype('float')
 
-            if background=='multinomial':
+            if background_model=='multinomial':
                 Loglike = likelihood(cascade, scores, eta, B, pi, gamma, omega, \
                     alpha, beta, tau, B_null)
             else:
@@ -897,21 +974,22 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
 
             tol = np.inf
             iter = 0
-            itertime = time.time()
 
             while np.abs(tol)>mintol:
 
-                if background=='multinomial':
-                    EM(cascade, scores, eta, B, pi, gamma, omega, \
-                        B_null, background='multinomial')
+                itertime = time.time()
+                if background_model=='multinomial':
+                    square_EM(cascade, scores, eta, B, pi, gamma, omega, \
+                        alpha, beta, tau, B_null, background='multinomial')
                 else:
                     EM(cascade, scores, eta, B, pi, gamma, omega, \
-                        B_null, gamma_null=gamma_null, omega_null=None, background='multinomial')
+                        alpha, beta, tau, B_null, \
+                        gamma_null=gamma_null, omega_null=None, background='multinomial')
 
                 # compute likelihood every 10 iterations
-                if (iter+1)%10==0:
+                if (iter+1)%1==0:
 
-                    if background=='multinomial':
+                    if background_model=='multinomial':
                         newLoglike = likelihood(cascade, scores, eta, B, pi, gamma, omega, \
                             alpha, beta, tau, B_null)
                     else:
@@ -921,7 +999,6 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
                     tol = newLoglike - Loglike
                     Loglike = newLoglike
                     print iter+1, newLoglike, tol, time.time()-itertime
-                    itertime = time.time()
 
                 iter += 1
 
@@ -932,10 +1009,10 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
                 restart += 1
                 if Loglike>maxLoglike:
                     maxLoglikeres = Loglike
-                    if background=='multinomial':
-                        footprint = (B, pi, gamma, omega, B_null)
-                    elif model=='modelE':
-                        footprint = (B, pi, gamma, omega, B_null, pi_null, gamma_null, omega_null)
+                    if background_model=='multinomial':
+                        footprint_model = (B, pi, gamma, omega, B_null)
+                    else:
+                        footprint_model = (B, pi, gamma, omega, B_null, pi_null, gamma_null, omega_null)
                     count_model = (alpha, tau)
                     prior = beta
 
@@ -951,6 +1028,7 @@ def decode(reads, totalreads, scores, background, footprint, negbinparams, prior
     (N,L,R) = reads.shape
     cascade = Cascade(reads)
     cascade_null = Cascade(background)
+    scores = np.hstack((np.ones((cascade.N,1), dtype=float), scores))
     del reads
 
     # negative binomial parameters
@@ -1001,7 +1079,7 @@ def decode(reads, totalreads, scores, background, footprint, negbinparams, prior
 
             change = np.abs(change-omega_null.estim).sum()
 
-    if background=='multinomial':
+    if background_model=='multinomial':
 
         eta = Eta(cascade, totalreads, scores, \
             B=B, pi=pi, gamma=gamma, omega=omega, B_null=B_null, \

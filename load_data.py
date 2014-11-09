@@ -1,6 +1,10 @@
 import numpy as np
+import itertools
+import subprocess
 import pysam
 import gzip
+import os
+import pdb
 
 MIN_MAP_QUAL = 10
 MAX_VAL = 65535
@@ -20,7 +24,7 @@ class ZipFile():
     def _readline(self):
 
         for line in self.handle:
-            yield tuple(line.strip().split('\t'))
+            yield line.strip().split('\t')
 
     def read(self, batch=None):
 
@@ -29,8 +33,7 @@ class ZipFile():
             locations = [line for line in self._readline()]
         else:
             # read a chunk of the file
-            locations = [self.handle.next().strip().split('\t') \
-                for index in xrange(chunk)]
+            locations = [loc for loc in itertools.islice(self._readline(), 0, batch)]
 
         for loc in locations:
             loc[1] = int(loc[1])
@@ -38,6 +41,8 @@ class ZipFile():
 
         return locations
 
+    def close(self):    
+        pass
 
 class BamFile():
 
@@ -47,46 +52,46 @@ class BamFile():
 
     def get_read_counts(self, locations, width=200):
 
-    	counts = []
-    	filtered_locations = []
-    	scores = []
+        counts = []
+        filtered_locations = []
+        scores = []
 
-    	for location in locations:
+        for location in locations:
 
-    		chrom = location[0]
-    		strand = location[3]
-    		if strand=='+':
-    			center = location[1]
-    		else:
-    			center = location[2]
-    		left = center-width/2
-    		right = center+width/2
+            chrom = location[0]
+            strand = location[3]
+            if strand=='+':
+                center = location[1]
+            else:
+                center = location[2]
+            left = center-width/2
+            right = center+width/2
 
-    		sam_iter = self._handle.fetch(reference=chrom, start=left, end=right)
-    		forward = np.zeros((width,), dtype=np.uint)
-    		reverse = np.zeros((width,), dtype=np.uint)
+            sam_iter = self._handle.fetch(reference=chrom, start=left, end=right)
+            forward = np.zeros((width,), dtype=np.uint)
+            reverse = np.zeros((width,), dtype=np.uint)
 
-    		for read in sam_iter:
+            for read in sam_iter:
 
                 # skip read if unmapped
-    			if read.is_unmapped:
-    				continue
-
-                # skip read, if mapping quality is low
-    			if read.mapq < MIN_MAP_QUAL:
-    				continue
-
-    			start = read.pos
-				end = start + read.alen
-
-                # skip read, if both ends don't fall within window
-                if start < left or end >= right:
+                if read.is_unmapped:
                     continue
 
-				if read.is_reverse:
-					reverse[end-left] += 1
-				else:
-					forward[start-left] += 1
+                # skip read, if mapping quality is low
+                if read.mapq < MIN_MAP_QUAL:
+                    continue
+
+                start = read.pos
+                end = start + read.alen - 1
+
+                # skip read, if 5' end of plus-strand read or 3' end of minus-strand read is outside window
+                if (read.is_reverse and end >= right) or (not read.is_reverse and start < left):
+                    continue
+
+                if read.is_reverse:
+                    reverse[end-left] += 1
+                else:
+                    forward[start-left] += 1
 
             # flip fwd and rev strand reads, 
             # if the motif is on the opposite strand.
@@ -96,7 +101,7 @@ class BamFile():
                 count = np.hstack((reverse[::-1], forward[::-1]))
 
             count[count>MAX_VAL] = MAX_VAL
-    		counts.append(count.astype(np.uint16))
+            counts.append(count.astype(np.uint16))
 
         counts = np.array(counts)
         return counts
