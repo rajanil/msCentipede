@@ -5,7 +5,7 @@ from scipy.special import digamma, gammaln, polygamma
 import time, math, pdb
 
 # suppress optimizer output
-#solvers.options['show_progress'] = False
+solvers.options['show_progress'] = False
 
 # defining some constants
 EPS = np.finfo(np.double).tiny
@@ -104,12 +104,11 @@ class Eta():
 
     def __init__(self, cascade, totalreads, scores=None, \
         B_null=None, omega_null=None, B=None, omega=None, \
-        beta=None, alpha=None, tau=None, background='multinomial'):
+        beta=None, alpha=None, tau=None, model='msCentipede'):
 
         self.N = cascade.N
         self.total = totalreads
         self.update_count = 0
-        self.background = background
 
         self.estim = np.zeros((self.N, 2),dtype=float)
         if alpha is None:
@@ -119,11 +118,7 @@ class Eta():
             self.estim[indices,1:] = MAX
         else:
             footprint_logodds = np.zeros((self.N,1), dtype=float)
-            if self.background=='multinomial':
-                lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, background=self.background)
-            else:
-                lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, \
-                    omega_null=omega_null, background=self.background)
+            lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, omega_null, model)
 
             for j in xrange(cascade.J):
                 footprint_logodds += insum(lhoodA.value[j] - lhoodB.value[j],[1])
@@ -148,14 +143,10 @@ class Eta():
 
     def update(self, cascade, scores, \
         B, omega, alpha, beta, tau, \
-        B_null, omega_null=None): 
+        B_null, omega_null, model):
 
         footprint_logodds = np.zeros((self.N,1),dtype=float)
-        if self.background=='multinomial':
-            lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, background=self.background)
-        else:
-            lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, \
-                omega_null=omega_null, background=self.background)
+        lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, omega_null, model)
 
         for j in xrange(cascade.J):
             footprint_logodds += insum(lhoodA.value[j] - lhoodB.value[j],[1])
@@ -201,7 +192,7 @@ class Bin(Cascade):
             eta = kwargs['eta']
             omega = kwargs['omega']
 
-            F = 0
+            F = np.zeros(eta.estim[:,1].shape, dtype=float)
             for j in xrange(self.J):
                 left = 2**j-1
                 right = 2**(j+1)-1
@@ -210,8 +201,9 @@ class Bin(Cascade):
                     func += gammaln(cascade.value[j][r] + omega.estim[j] * x[left:right]) \
                         + gammaln(cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
                         - gammaln(omega.estim[j] * x[left:right]) - gammaln(omega.estim[j] * (1 - x[left:right]))
-                F += -1. * np.sum(np.sum(eta.estim[:,1:] * func,0))
-            return F
+                F += np.sum(func,1)
+            f = -1. * np.sum(eta.estim[:,1] * F)
+            return f
 
         def gradient(x, kwargs):
             cascade = kwargs['cascade']
@@ -287,20 +279,19 @@ class Omega():
             eta = kwargs['eta']
             B = kwargs['B']
 
-            func = 0.
+            func = np.zeros(eta.estim[:,1].shape, dtype=float)
             # loop over each scale
             for j in xrange(self.J):
 
-                f = np.zeros(cascade.value[j].shape, dtype=float)
                 # loop over replicates
                 for r in xrange(cascade.R):
-                    f += gammaln(cascade.value[j][r] + B.value[j] * x[j]) \
+                    F = gammaln(cascade.value[j][r] + B.value[j] * x[j]) \
                         + gammaln(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
                         - gammaln(cascade.total[j][r] + x[j]) + gammaln(x[j]) \
                         - gammaln(B.value[j] * x[j]) - gammaln((1 - B.value[j]) * x[j])
-                func += np.sum(np.sum(eta.estim[:,1:] * f,0))
+                    func += np.sum(F, 1)
 
-            F = -1.*func.sum()
+            F = -1. * np.sum(eta.estim[:,1] * func)
             return F
 
         def gradient(x, kwargs):
@@ -312,14 +303,15 @@ class Omega():
             # loop over each scale
             for j in xrange(self.J):
 
-                f = np.zeros(cascade.value[j].shape, dtype=float)
                 # loop over replicates
+                df = np.zeros(eta.estim[:,1].shape, dtype=float)
                 for r in xrange(cascade.R):
-                    f += B.value[j] * digamma(cascade.value[j][r] + B.value[j] * x[j]) \
+                    f = B.value[j] * digamma(cascade.value[j][r] + B.value[j] * x[j]) \
                         + (1 - B.value[j]) * digamma(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
                         - digamma(cascade.total[j][r] + x[j]) + digamma(x[j]) \
                         - B.value[j] * digamma(B.value[j] * x[j]) - (1 - B.value[j]) * digamma((1 - B.value[j]) * x[j])
-                Df[j] += -1 * np.sum(np.sum(eta.estim[:,1:] * f,0))
+                    df += np.sum(f, 1)
+                Df[j] = -1 * np.sum(eta.estim[:,1] * df)
 
             return Df
 
@@ -331,15 +323,16 @@ class Omega():
             hess = np.zeros(x.shape, dtype=float)
             for j in xrange(self.J):
 
-                f = np.zeros(cascade.value[j].shape, dtype=float)
                 # loop over replicates
+                hf = np.zeros(eta.estim[:,1].shape, dtype=float)
                 for r in xrange(cascade.R):
-                    f += B.value[j]**2 * polygamma(1, cascade.value[j][r] + B.value[j] * x[j]) \
+                    f = B.value[j]**2 * polygamma(1, cascade.value[j][r] + B.value[j] * x[j]) \
                         + (1 - B.value[j])**2 * polygamma(1, cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
                         - polygamma(1, cascade.total[j][r] + x[j]) + polygamma(1, x[j]) \
                         - B.value[j]**2 * polygamma(1, B.value[j] * x[j]) \
                         - (1 - B.value[j])**2 * polygamma(1, (1 - B.value[j]) * x[j])
-                hess[j] += -1 * np.sum(np.sum(eta.estim[:,1:] * f,0))
+                    hf += np.sum(f, 1)
+                hess[j] = -1 * np.sum(eta.estim[:,1] * hf)
 
             Hf = np.diag(hess)
             return Hf
@@ -379,8 +372,8 @@ class Alpha():
             eta = kwargs['eta']
             tau = kwargs['tau']
             constant = kwargs['constant']
+            etaestim = kwargs['etaestim']
 
-            etaestim = outsum(eta.estim)
             func = np.array([outsum(gammaln(eta.total[:,r:r+1] + x[2*r:2*r+2]) * eta.estim) \
                     - gammaln(x[2*r:2*r+2]) * etaestim[0] + constant[r] * x[2*r:2*r+2] \
                     for r in xrange(tau.R)])
@@ -500,7 +493,6 @@ class Beta():
             Hf = np.dot(scores.T, larg)
             return Hf
 
-
         xo = self.estim.copy()
         self.estim = optimizer(xo, function, gradient, hessian, scores=scores, eta=eta)
 
@@ -569,7 +561,7 @@ def optimizer(xo, function, gradient, hessian, **kwargs):
     return x_final
 
 
-def likelihoodAB(cascade, B, omega, B_null, omega_null=None, background='multinomial'):
+def likelihoodAB(cascade, B, omega, B_null, omega_null, model):
 
     lhoodA = Cascade()
     lhoodB = Cascade()
@@ -578,7 +570,7 @@ def likelihoodAB(cascade, B, omega, B_null, omega_null=None, background='multino
         value = outsum(cascade.value[j])[0]
         total = outsum(cascade.total[j])[0]
             
-        if background=='multinomial':
+        if model in ['msCentipede','msCentipede_flexbgmean']:
             
             lhoodA.value[j] = outsum([gammaln(cascade.value[j][r] + B.value[j] * omega.estim[j]) \
                 + gammaln(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * omega.estim[j]) \
@@ -589,7 +581,7 @@ def likelihoodAB(cascade, B, omega, B_null, omega_null=None, background='multino
             lhoodB.value[j] = value * nplog(B_null.value[j]) \
                 + (total - value) * nplog(1 - B_null.value[j])
     
-        else:
+        elif model=='msCentipede_flexbg':
             
             lhoodA.value[j] = outsum([gammaln(cascade.value[j][r] + B.value[j] * omega.estim[j]) \
                 + gammaln(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * omega.estim[j]) \
@@ -607,18 +599,14 @@ def likelihoodAB(cascade, B, omega, B_null, omega_null=None, background='multino
 
 
 def likelihood(cascade, scores, eta, B, omega, \
-    alpha, beta, tau, B_null, omega_null=None, background='multinomial'):
+    alpha, beta, tau, B_null, omega_null, model):
 
     apriori = insum(beta.estim * scores,[1])
 
-    if background=='multinomial':
-        lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, background=background)
-    else:
-        lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, \
-            omega_null=omega_null, background=background)
+    lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, omega_null, model)
 
     footprint = np.zeros((cascade.N,1),dtype=float)
-    for j in xrange(pi.J):
+    for j in xrange(cascade.J):
         footprint += insum(lhoodA.value[j],[1])
 
     P_1 = footprint + insum(gammaln(eta.total + alpha.estim[:,1]) - gammaln(alpha.estim[:,1]) \
@@ -651,29 +639,37 @@ def likelihood(cascade, scores, eta, B, omega, \
     return L
 
 
-def EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_null=None, background='multinomial'):
+def EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_null, model):
 
     # update binding posteriors
-    if background=='multinomial':
-        eta.update(cascade, scores, B, omega, \
-            alpha, beta, tau, B_null)
-    else:
-        eta.update(cascade, scores, B, omega, \
-            alpha, beta, tau, B_null, omega_null=omega_null)
+    eta.update(cascade, scores, B, omega, \
+            alpha, beta, tau, B_null, omega_null, model)
 
     # update multi-scale parameters
+    starttime = time.time()
     B.update(cascade, eta, omega)
-    omega.update(cascade, eta, B)
+    print "p_jk update in %.3f secs"%(time.time()-starttime)
 
+    starttime = time.time()
+    omega.update(cascade, eta, B)
+    print "omega update in %.3f secs"%(time.time()-starttime)
+    
     # update negative binomial parameters
+    starttime = time.time()
     tau.update(eta, alpha)
+    print "tau update in %.3f secs"%(time.time()-starttime)
+
+    starttime = time.time()
     alpha.update(eta, tau)
+    print "alpha update in %.3f secs"%(time.time()-starttime)
 
     # update prior parameters
+    starttime = time.time()
     beta.update(scores, eta)
+    print "beta update in %.3f secs"%(time.time()-starttime)
 
 
-def square_EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_null=None, background='multinomial'):
+def square_EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_null, model):
 
     parameters = [B, omega, alpha, tau]
     oldvar = []
@@ -687,8 +683,7 @@ def square_EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_nu
     for step in [0,1]:
         EM(cascade, scores, eta, B, omega, \
                 alpha, beta, tau, \
-                B_null, omega_null=omega_null, \
-                background=background)
+                B_null, omega_null, model)
         oldvar = []
         for parameter in parameters:
             try:
@@ -725,11 +720,10 @@ def square_EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_nu
 
     EM(cascade, scores, eta, B, omega, \
                 alpha, beta, tau, \
-                B_null, omega_null=omega_null, \
-                background=background)
+                B_null, omega_null, model)
 
 
-def infer(reads, totalreads, scores, background, background_model='multinomial', restarts=3, mintol=1e-2):
+def infer(reads, totalreads, scores, background, model, restarts, mintol):
 
     cascade = Cascade(reads)
     cascade_null = Cascade(background)
@@ -737,19 +731,16 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
     del reads
 
     # set background model
-    B_null = Bin(cascade.J)
-    if background_model=='multinomial':
+    B_null = Bin(cascade_null.J)
+    for j in xrange(B_null.J):
+        B_null.value[j] = np.sum(np.sum(cascade_null.value[j],0),0) / np.sum(np.sum(cascade_null.total[j],0),0).astype('float')
+    omega_null = None
         
-        for j in xrange(B_null.J):
-            B_null.value[j] = np.sum(cascade_null.value[j][0],0) / np.sum(cascade_null.total[j][0],0).astype('float')
-
-    else:
+    if model=='msCentipede_flexbg':
         
-        Bg = Bin(cascade.J)
-        Bg.value = dict([(j,0.5*np.ones((2**j,))) for j in xrange(Bg.J)])
         omega_null = Omega(cascade_null.J)
 
-        eta_null = Eta(cascade_null, totalreads)
+        eta_null = Eta(cascade_null, background.sum(1))
         eta_null.estim[:,1] = 1
         eta_null.estim[:,0] = 0
 
@@ -760,9 +751,8 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
         while change>1e-1:
             change = omega_null.estim.copy()
             
-            B_null.update_Mstep(cascade_null, eta_null, gamma_null, omega_null)
-
-            omega_null.update_Mstep(cascade_null, eta_null, gamma_null, B_null)
+            omega_null.update(cascade_null, eta_null, B_null)
+            B_null.update(cascade_null, eta_null, omega_null)
 
             change = np.abs(change-omega_null.estim).sum()
 
@@ -783,16 +773,12 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
             beta = Beta(scores)
 
             # initialize posterior over latent variables
-            eta = Eta(cascade, totalreads)
+            eta = Eta(cascade, totalreads, model=model)
             for j in xrange(B.J):
                 B.value[j] = np.sum(cascade.value[j][0]*eta.estim[:,1:],0) / np.sum(cascade.total[j][0]*eta.estim[:,1:],0).astype('float')
 
-            if background_model=='multinomial':
-                Loglike = likelihood(cascade, scores, eta, B, omega, \
-                    alpha, beta, tau, B_null)
-            else:
-                Loglike = likelihood(cascade, scores, eta, B, omega, \
-                    alpha, beta, tau, B_null, omega_null=omega_null)
+            Loglike = likelihood(cascade, scores, eta, B, omega, \
+                    alpha, beta, tau, B_null, omega_null, model)
 
             tol = np.inf
             iter = 0
@@ -800,23 +786,14 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
             while np.abs(tol)>mintol:
 
                 itertime = time.time()
-                if background_model=='multinomial':
-                    square_EM(cascade, scores, eta, B, omega, \
-                        alpha, beta, tau, B_null, background='multinomial')
-                else:
-                    EM(cascade, scores, eta, B, omega, \
-                        alpha, beta, tau, B_null, \
-                        omega_null=None, background='multinomial')
+                square_EM(cascade, scores, eta, B, omega, \
+                        alpha, beta, tau, B_null, omega_null, model)
 
                 # compute likelihood every 10 iterations
                 if (iter+1)%1==0:
 
-                    if background_model=='multinomial':
-                        newLoglike = likelihood(cascade, scores, eta, B, omega, \
-                            alpha, beta, tau, B_null)
-                    else:
-                        newLoglike = likelihood(cascade, scores, eta, B, omega, \
-                            alpha, beta, tau, B_null, omega_null=omega_null)
+                    newLoglike = likelihood(cascade, scores, eta, B, omega, \
+                            alpha, beta, tau, B_null, omega_null, model)
 
                     tol = newLoglike - Loglike
                     Loglike = newLoglike
@@ -831,9 +808,9 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
                 restart += 1
                 if Loglike>maxLoglike:
                     maxLoglikeres = Loglike
-                    if background_model=='multinomial':
+                    if model in ['msCentipede','msCentipede_flexbgmean']:
                         footprint_model = (B, omega, B_null)
-                    else:
+                    elif model=='msCentipede_flexbg':
                         footprint_model = (B, omega, B_null, omega_null)
                     count_model = (alpha, tau)
                     prior = beta
@@ -845,7 +822,7 @@ def infer(reads, totalreads, scores, background, background_model='multinomial',
     return footprint_model, count_model, prior
 
 
-def decode(reads, totalreads, scores, background, footprint, negbinparams, prior, background_model='multinomial'):
+def decode(reads, totalreads, scores, background, footprint, negbinparams, prior, model):
 
     (N,L,R) = reads.shape
     cascade = Cascade(reads)
@@ -864,20 +841,15 @@ def decode(reads, totalreads, scores, background, footprint, negbinparams, prior
     
     # setting background model
     B_null = footprint[2]
+    for j in xrange(B_null.J):
+        B_null.value[j] = np.sum(np.sum(cascade_null.value[j],0),0) / np.sum(np.sum(cascade_null.total[j],0),0).astype('float')
+    omega_null = None
 
-    if background_model=='multinomial':
-
-        for j in xrange(B_null.J):
-            B_null.value[j] = np.sum(cascade_null.value[j],1) / np.sum(cascade_null.total[j],1).astype('float')
-    
-    else:
+    if model=='msCentipede_flexbg':
 
         omega_null = footprint[3]
 
-        Bg = Bin(L, background=background_model)
-        Bg.value = dict([(j,0.5*np.ones((2**j,))) for j in xrange(Bg.J)])
-
-        eta_null = Eta(cascade_null, totalreads, scores)
+        eta_null = Eta(cascade_null, background.sum(1))
         eta_null.estim[:,1] = 1
         eta_null.estim[:,0] = 0
 
@@ -887,23 +859,14 @@ def decode(reads, totalreads, scores, background, footprint, negbinparams, prior
         while change>1e-1:
             change = omega_null.estim.copy()
             
-            B_null.update_Mstep(cascade_null, eta_null, omega_null)
+            B_null.update(cascade_null, eta_null, omega_null)
 
-            omega_null.update_Mstep(cascade_null, eta_null, B_null)
+            omega_null.update(cascade_null, eta_null, B_null)
 
             change = np.abs(change-omega_null.estim).sum()
 
-    if background_model=='multinomial':
-
-        eta = Eta(cascade, totalreads, scores, \
-            B=B, omega=omega, B_null=B_null, \
-            beta=beta, alpha=alpha, tau=tau)
+    eta = Eta(cascade, totalreads, scores, \
+            B=B, omega=omega, B_null=B_null, omega_null=omega_null, \
+            beta=beta, alpha=alpha, tau=tau, model=model)
     
-    else:
-    
-        eta = Eta(cascade, totalreads, scores, \
-            B=B, omega=omega, \
-            B_null=B_null, omega_null=omega_null, \
-            beta=beta, alpha=alpha, tau=tau)
-
     return eta.estim

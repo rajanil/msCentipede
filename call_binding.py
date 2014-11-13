@@ -42,24 +42,27 @@ def infer(options):
         counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
             count[:,300-options.window/2:300+options.window/2])).T \
             for count in count_data]).T
+    else:
+        counts = np.array([count.T for count in count_data]).T
 
     # specify background
-    if options.background_model=='multinomial':
-        if options.bam_file_genomicdna:
-            bam_handle = load_data.BamFile(options.bam_file_genomicdna)
-            background_counts = bam_handle.get_read_counts(locations)
-            bam_handle.close()
-        else:
-            background_counts = np.ones((1,2*options.window,1), dtype=float)
-    else:
+    if options.model=='msCentipede':
+        background_counts = np.ones((1,2*options.window,1), dtype=float)
+    elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
         bam_handle = load_data.BamFile(options.bam_file_genomicdna)
-        background_counts = bam_handle.get_read_counts(locations)
+        bg_count_data = np.array([bam_handle.get_read_counts(locations)])
         bam_handle.close()
+
+        if options.window<200:
+            background_counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
+                count[:,300-options.window/2:300+options.window/2])).T \
+                for count in bg_count_data]).T
+        else:
+            background_counts = np.array([count.T for count in bg_count_data]).T
 
     # estimate model parameters
     footprint_model, count_model, prior = mscentipede.infer(counts, total_counts, scores, \
-        background=background_counts, background_model=options.background_model, \
-        restarts=options.restarts, mintol=options.mintol)
+        background_counts, options.model, options.restarts, options.mintol)
 
     # save model parameter estimates
     model_handle = open(options.model_file, 'w')
@@ -85,12 +88,9 @@ def decode(options):
     bam_handles = [load_data.BamFile(bam_file) for bam_file in options.bam_files]
 
     # open background data handles
-    if options.background_model=='multinomial':
-        if options.bam_file_genomicdna:
-            bg_handle = load_data.BamFile(options.bam_file_genomicdna)
-        else:
-            background_counts = np.ones((1,2*options.window,1), dtype=float)
-    else:
+    if options.model=='msCentipede':
+        background_counts = np.ones((1,2*options.window,1), dtype=float)
+    elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
         bg_handle = load_data.BamFile(options.bam_file_genomicdna)
 
     # check number of motif sites
@@ -116,13 +116,22 @@ def decode(options):
             counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
                 count[:,300-options.window/2:300+options.window/2])).T \
                 for count in count_data]).T
+        else:
+            counts = np.array([count.T for count in count_data]).T
 
         # specify background
-        if options.bam_file_genomicdna:
-            background_counts = bg_handle.get_read_counts(locations)
+        if options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
+            bg_count_data = np.array([bg_handle.get_read_counts(locations)])
+
+            if options.window<200:
+                background_counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
+                    count[:,300-options.window/2:300+options.window/2])).T \
+                    for count in bg_count_data]).T
+            else:
+                background_counts = np.array([count.T for count in bg_count_data]).T
 
         logodds = mscentipede.decode(counts, total_counts, scores, background_counts, \
-            footprint_model, count_model, prior, background_model=options.background_model)
+            footprint_model, count_model, prior, options.model)
 
         ignore = [loc.extend(['%.4f'%p for p in pos[:4]])
             for loc,pos in zip(locations,logodds)]
@@ -130,7 +139,7 @@ def decode(options):
         print len(locations), time.time()-starttime
 
     handle.close()
-    if options.bam_file_genomicdna:
+    if options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
         bg_handle.close()
     ig = [handle.close() for handle in bam_handles]
 
@@ -151,14 +160,14 @@ def parse_args():
                         help="call the subroutine to compute binding posteriors, given "
                         "msCentipede model parameters")
 
-    parser.add_argument("--background_model", 
-                        choices=("multinomial", "multiscale"),
-                        default="multinomial",
+    parser.add_argument("--model", 
+                        choices=("msCentipede", "msCentipede_flexbg", "msCentipede_flexbgmean"),
+                        default="msCentipede",
                         help="model for the background rate of chromatin accessibility")
 
     parser.add_argument("--restarts", 
                         type=int, 
-                        default=3, 
+                        default=1, 
                         help="number of re-runs of the algorithm")
 
     parser.add_argument("--mintol", 
@@ -204,7 +213,7 @@ def parse_args():
 
     parser.add_argument("--bam_file_genomicdna",
                         action="store",
-                        nargs="+",
+                        #nargs="+",
                         default=None,
                         help="comma-separated list of bam files "
                         " from a chromatin accessibility assay on genomic DNA")
