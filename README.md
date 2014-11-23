@@ -62,13 +62,23 @@ options that need to be passed to the script, you can do the following:
                                     [--bam_file_genomicdna BAM_FILE_GENOMICDNA (default: None)]
                                     motif_file bam_files [bam_files ...]
 
+The key inputs that need to be passed to this script are a path to the file containing the list of motif instances and the bam files (sorted and indexed) containing sequencing reads from a chromatin accessibility assay (DNase-seq or ATAC-seq). Note that the files must be specified in the correct order (as shown above). When multiple library replicates are available, the bam files for the replicates should be provided as separate files, separated by whitespace. Bam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. If the model flag is specified to be `msCentipede-flexbgmean` or `msCentipede-flexbg`, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed to the flag `bam_file_genomicdna`.
+
 ### Learning model parameters
 
+To learn the model parameters, the value of `mode` should be set to `learn` and a custom file name can be provided where optimal model parameters will be stored. For example, given a set of CTCF motif instances in `test/CTCF_motifs.txt.gz` and bam files containing 3 replicate DNase-seq data sets in LCLs, we can learn the model parameters using the command
 
+    python call_binding.py --model learn test/CTCF test/LCL_dnase_seq_Rep1.bam test/LCL_dnase_seq_Rep2.bam test/LCL_dnase_seq_Rep3.bam
+
+This will run msCentipede with all other default values and output a file `test/CTCF_model_parameters.pkl`. Alternatively, you can specify the file name to which the model parameters will be stored, using the flag `model_file`.
 
 ### Inferring factor binding
 
+To compute the posterior binding odds for a set of motif instances, the value of `mode` should be set to `infer` and a file path containing the model parameters should be provided (in addition to other key inputs). For example,
 
+    python call_binding.py --model infer --model_file test/CTCF_model_parameters.pkl test/CTCF test/LCL_dnase_seq_Rep1.bam test/LCL_dnase_seq_Rep2.bam test/LCL_dnase_seq_Rep3.bam
+
+This will run msCentipede with all other default values and output a file `test/CTCF_binding_posterior.txt.gz`. Alternatively, you can specify the file name to which the binding posterior odds and other metrics will be written.
 
 ## Running on test data
 
