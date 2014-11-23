@@ -1082,7 +1082,7 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
             tau_null.update(data_null, zeta_null, pi_null)
             pi_null.update(data_null, zeta_null, tau_null)
 
-            change = np.abs(change-tau_null.estim).sum()
+            change = np.abs(change-tau_null.estim).sum() / tau_null.J
 
     maxLoglike = -np.inf
     restart = 0

@@ -130,7 +130,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="""runs msCentipede, to "
         "infer posterior of transcription factor binding, given a set of motif locations.""")
 
-    parser.add_argument("--mode",
+    parser.add_argument("--task",
                         choices=("learn","infer"),
                         default="learn",
                         help="specify whether msCentipede is used to learn model parameters "
@@ -215,7 +215,7 @@ def parse_args():
         options.posterior_file = options.motif_file.split('.')[0]+"_binding_posterior.txt.gz"
     
     # make sure model file exists, before trying to run inference
-    if options.mode=='infer':
+    if options.task=='infer':
         try:
             handle = open(options.model_file, 'r')
             handle.close()
@@ -234,10 +234,10 @@ def main():
 
     options = parse_args()
 
-    if options.mode=='learn':
+    if options.task=='learn':
         learn_model(options)
 
-    elif options.mode=='infer':
+    elif options.task=='infer':
         infer_binding(options)
 
 if __name__=="__main__":
