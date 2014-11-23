@@ -213,6 +213,9 @@ def parse_args():
     # if no posterior file is provided, create a `default` posterior file name
     if options.posterior_file is None:
         options.posterior_file = options.motif_file.split('.')[0]+"_binding_posterior.txt.gz"
+    
+    # make sure model file exists, before trying to run inference
+    if options.mode=='infer':
         try:
             handle = open(options.model_file, 'r')
             handle.close()
