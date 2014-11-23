@@ -12,11 +12,6 @@ This document summarizes how to setup this software package
 and run the algorithm on a test dataset of motif instances
 and some publicly available DNase-seq data.
 
-## Parts 
-
-This repo has two components: a library of C and Cython scripts *vars* and
-a set of Cython and pure Python scripts to load the data and run the algorithm.
-
 ## Dependencies
 
 *msCentipede* depends on 
@@ -55,14 +50,16 @@ options that need to be passed to the script, you can do the following:
 
     Here is how you can use this script
 
-    Usage: python call_binding.py   [-h] [--learn] [--infer]
-                                    [--model {msCentipede,msCentipede_flexbg,msCentipede_flexbgmean}]
-                                    [--restarts RESTARTS] 
-                                    [--mintol MINTOL]
-                                    [--model_file MODEL_FILE]
-                                    [--posterior_file POSTERIOR_FILE] [--window WINDOW]
-                                    [--batch BATCH]
-                                    [--bam_file_genomicdna BAM_FILE_GENOMICDNA]
+    Usage: python call_binding.py   [-h] 
+                                    [--mode {learn,infer} (default: learn)]
+                                    [--model {msCentipede,msCentipede_flexbg,msCentipede_flexbgmean} (default: msCentipede)]
+                                    [--restarts RESTARTS (default: 1)] 
+                                    [--mintol MINTOL (default: 1e-6)]
+                                    [--model_file MODEL_FILE (default: None)]
+                                    [--posterior_file POSTERIOR_FILE (default: None)]
+                                    [--window WINDOW (default: 128)]
+                                    [--batch BATCH (default: 10000)]
+                                    [--bam_file_genomicdna BAM_FILE_GENOMICDNA (default: None)]
                                     motif_file bam_files [bam_files ...]
 
 ### Learning model parameters

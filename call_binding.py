@@ -130,10 +130,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description="""runs msCentipede, to "
         "infer posterior of transcription factor binding, given a set of motif locations.""")
 
-    parser.add_argument("--learn",
-                        default=False,
-                        action='store_true',
-                        help="call the subroutine to learn msCentipede model parameters")
+    parser.add_argument("--mode",
+                        choices=("learn","infer"),
+                        default="learn",
+                        help="specify whether msCentipede is used to learn model parameters "
+                        " or infer factor binding ")
 
     parser.add_argument("--infer",
                         default=False,
@@ -176,7 +177,7 @@ def parse_args():
 
     parser.add_argument("--batch", 
                         type=int, 
-                        default=5000, 
+                        default=10000, 
                         help="number of motifs to use for learning model parameters; "
                         " also, number of motifs to decode at a time.")
 
@@ -225,11 +226,11 @@ def main():
 
     options = parse_args()
 
-    if options.infer:
-        infer(options)
+    if options.mode=='learn':
+        learn_model(options)
 
-    elif options.decode:
-        decode(options)
+    elif options.mode=='infer':
+        infer_binding(options)
 
 if __name__=="__main__":
 
