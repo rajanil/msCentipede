@@ -209,15 +209,20 @@ def parse_args():
     # if no model file is provided, create a `default` model file name
     if options.model_file is None:
         options.model_file = options.motif_file.split('.')[0]+"_model_parameters.pkl"
+
+    # if no posterior file is provided, create a `default` posterior file name
+    if options.posterior_file is None:
+        options.posterior_file = options.motif_file.split('.')[0]+"_binding_posterior.txt.gz"
         try:
             handle = open(options.model_file, 'r')
             handle.close()
         except IOError:
             parser.error("Need to provide the file where model parameters are saved")
 
-    # if no posterior file is provided, create a `default` posterior file name
-    if options.posterior_file is None:
-        options.posterior_file = options.motif_file.split('.')[0]+"_binding_posterior.txt.gz"
+    if options.model in ['msCentipede-flexbgmean','msCentipede-flexbg'] and options.bam_file_genomicdna is None:
+        parser.error("Need to provide a bam file containing chromatin accessibility \
+            data in genomic DNA, if the model is specified to be \
+            msCentipede-flexbgmean or msCentipede-flexbg")
 
     return options
 
