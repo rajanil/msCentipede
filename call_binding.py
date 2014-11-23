@@ -222,7 +222,7 @@ def parse_args():
         except IOError:
             parser.error("Need to provide the file where model parameters are saved")
 
-    if options.model in ['msCentipede-flexbgmean','msCentipede-flexbg'] and options.bam_file_genomicdna is None:
+    if options.model in ['msCentipede_flexbgmean','msCentipede_flexbg'] and options.bam_file_genomicdna is None:
         parser.error("Need to provide a bam file containing chromatin accessibility \
             data in genomic DNA, if the model is specified to be \
             msCentipede-flexbgmean or msCentipede-flexbg")
