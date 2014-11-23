@@ -47,7 +47,16 @@ def nplog(x):
     return np.log(x)
 
 
-class Cascade:
+class Data:
+    """
+    A data structure to store a multiscale representation of
+    chromatin accessibility read counts across `N` genomic windows of
+    length `L` in `R` replicates.
+
+    Arguments
+        reads : array
+
+    """
 
     def __init__(self, reads=None):
 
@@ -66,6 +75,13 @@ class Cascade:
             self.transform(reads)
 
     def transform(self, profile):
+        """Transform a vector of read counts or parameter values
+        into a multiscale representation.
+        
+        .. note::
+            See msCentipede manual for more details.   
+
+        """
 
         for j in xrange(self.J):
             size = self.L/(2**(j+1))
@@ -73,6 +89,10 @@ class Cascade:
             self.value[j] = np.array([profile[:,k*size:(k+1)*size,:].sum(1) for k in xrange(0,2**(j+1),2)]).T
 
     def inverse_transform(self):
+        """Transform a multiscale representation of the data or parameters,
+        into vector representation.
+
+        """
 
         if self.data:
             profile = np.array([val for k in xrange(2**self.J) \
@@ -87,8 +107,10 @@ class Cascade:
         return profile
 
     def copy(self):
+        """ Create a copy of the class instance
+        """
 
-        newcopy = Cascade()
+        newcopy = Data()
         newcopy.J = self.J
         newcopy.N = self.N
         newcopy.L = self.L
@@ -100,63 +122,53 @@ class Cascade:
         return newcopy
 
 
-class Eta():
+class Zeta():
+    """
+    Inference class to store and update (E-step) the posterior
+    probability that a transcription factor is bound to a motif
+    instance.
 
-    def __init__(self, cascade, totalreads, scores=None, \
-        B_null=None, omega_null=None, B=None, omega=None, \
-        beta=None, alpha=None, tau=None, model='msCentipede'):
+    Arguments
+        data : Data
+        totalreads : array
 
-        self.N = cascade.N
+    """
+
+    def __init__(self, data, totalreads, infer=False):
+
+        self.N = data.N
         self.total = totalreads
-        self.update_count = 0
 
-        self.estim = np.zeros((self.N, 2),dtype=float)
-        if alpha is None:
-            indices = np.argsort(self.total.sum(1))[:self.N/2]
-            self.estim[indices,1:] = -MAX
-            indices = np.argsort(self.total.sum(1))[self.N/2:]
-            self.estim[indices,1:] = MAX
+        if infer:
+            self.prior_log_odds = np.zeros((self.N,1), dtype=float)
+            self.footprint_log_likelihood_ratio = np.zeros((self.N,1), dtype=float)
+            self.total_log_likelihood_ratio = np.zeros((self.N,1), dtype=float)
+            self.posterior_log_odds = np.zeros((self.N,1), dtype=float)
         else:
-            footprint_logodds = np.zeros((self.N,1), dtype=float)
-            lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, omega_null, model)
-
-            for j in xrange(cascade.J):
-                footprint_logodds += insum(lhoodA.value[j] - lhoodB.value[j],[1])
-
-            self.estim = np.zeros((self.N, 4),dtype=float)
-            self.estim[:,1:2] = insum(beta.estim * scores, [1])
-            self.estim[:,2:3] = footprint_logodds
-            self.estim[:,3:4] = insum(gammaln(self.total + alpha.estim.T[1]) \
-                - gammaln(self.total + alpha.estim.T[0]) \
-                + gammaln(alpha.estim.T[0]) - gammaln(alpha.estim.T[1]) \
-                + alpha.estim.T[1] * nplog(tau.estim.T[1]) - alpha.estim.T[0] * nplog(tau.estim.T[0]) \
-                + self.total * (nplog(1 - tau.estim.T[1]) - nplog(1 - tau.estim.T[0])),[1])
-
-            self.estim[:,0] = self.estim[:,1:].sum(1)
-
-        if alpha is None:
-            self.estim[self.estim==np.inf] = MAX
+            self.estim = np.zeros((self.N, 2),dtype=float)
+            order = np.argsort(self.total.sum(1))
+            indices = order[:self.N/2]
+            self.estim[indices,1:] = -MAX
+            indices = order[self.N/2:]
+            self.estim[indices,1:] = MAX
             self.estim = np.exp(self.estim - np.max(self.estim,1).reshape(self.N,1))
             self.estim = self.estim / insum(self.estim,[1])
-        else:
-            self.estim = self.estim / np.log(10)
 
-    def update(self, cascade, scores, \
-        B, omega, alpha, beta, tau, \
-        B_null, omega_null, model):
+    def update(self, data, scores, pi, tau, alpha, beta, omega, \
+        pi_null, tau_null, model):
 
         footprint_logodds = np.zeros((self.N,1),dtype=float)
-        lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, omega_null, model)
+        lhoodA, lhoodB = likelihoodAB(data, pi, tau, pi_null, tau_null, model)
 
-        for j in xrange(cascade.J):
+        for j in xrange(data.J):
             footprint_logodds += insum(lhoodA.value[j] - lhoodB.value[j],[1])
 
         prior_logodds = insum(beta.estim * scores, [1])
         negbin_logodds = insum(gammaln(self.total + alpha.estim.T[1]) \
                 - gammaln(self.total + alpha.estim.T[0]) \
                 + gammaln(alpha.estim.T[0]) - gammaln(alpha.estim.T[1]) \
-                + alpha.estim.T[1] * nplog(tau.estim.T[1]) - alpha.estim.T[0] * nplog(tau.estim.T[0]) \
-                + self.total * (nplog(1 - tau.estim.T[1]) - nplog(1 - tau.estim.T[0])),[1])
+                + alpha.estim.T[1] * nplog(omega.estim.T[1]) - alpha.estim.T[0] * nplog(omega.estim.T[0]) \
+                + self.total * (nplog(1 - omega.estim.T[1]) - nplog(1 - omega.estim.T[0])),[1])
 
         self.estim[:,1:] = prior_logodds + footprint_logodds + negbin_logodds
         self.estim[:,0] = 0.
@@ -164,85 +176,119 @@ class Eta():
         self.estim = np.exp(self.estim-np.max(self.estim,1).reshape(self.N,1))
         self.estim = self.estim/insum(self.estim,[1])
 
-        if np.isnan(self.estim).any():
-            print "Nan in Eta"
-            raise ValueError
+    def infer(self, data, scores, pi, tau, alpha, beta, omega, \
+        pi_null, tau_null, model):
 
-        if np.isinf(self.estim).any():
-            print "Inf in Eta"
-            raise ValueError
+        lhoodA, lhoodB = likelihoodAB(data, pi, tau, pi_null, tau_null, model)
 
-        self.update_count += 1
+        for j in xrange(data.J):
+            self.footprint_log_likelihood_ratio += insum(lhoodA.value[j] - lhoodB.value[j],[1])
+        self.footprint_log_likelihood_ratio = self.footprint_log_likelihood_ratio / np.log(10)
+
+        self.prior_log_odds = insum(beta.estim * scores, [1]) / np.log(10)
+
+        self.total_log_likelihood_ratio = insum(gammaln(self.total + alpha.estim.T[1]) \
+            - gammaln(self.total + alpha.estim.T[0]) \
+            + gammaln(alpha.estim.T[0]) - gammaln(alpha.estim.T[1]) \
+            + alpha.estim.T[1] * nplog(omega.estim.T[1]) - alpha.estim.T[0] * nplog(omega.estim.T[0]) \
+            + self.total * (nplog(1 - omega.estim.T[1]) - nplog(1 - omega.estim.T[0])),[1])
+        self.total_log_likelihood_ratio = self.total_log_likelihood_ratio / np.log(10)
+
+        self.posterior_log_odds = self.prior_log_odds \
+            + self.footprint_log_likelihood_ratio \
+            + self.total_log_likelihood_ratio
 
 
-class Bin(Cascade):
+class Pi(Data):
+    """
+    Class to store and update (M-step) the parameter `p` in the
+    msCentipede model. It is also used for the parameter `p_o` in
+    the msCentipede-flexbg model.
+
+    Arguments
+        J : int
+        number of scales
+
+    """
 
     def __init__(self, J):
 
-        Cascade.__init__(self)
+        Data.__init__(self)
         self.J = J
         for j in xrange(self.J):
             self.value[j] = np.random.rand(2**j)
-        self.update_count = 0
 
-    def update(self, cascade, eta, omega):
+    def update(self, data, zeta, tau):
+        """Update the estimates of parameter `p` (and `p_o`) in the model.
+        """
 
         def function(x, kwargs):
-            cascade = kwargs['cascade']
-            eta = kwargs['eta']
-            omega = kwargs['omega']
+            """Computes part of the likelihood function that has
+            terms containing `pi`.
+            """
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            tau = kwargs['tau']
 
-            F = np.zeros(eta.estim[:,1].shape, dtype=float)
+            F = np.zeros(zeta.estim[:,1].shape, dtype=float)
             for j in xrange(self.J):
                 left = 2**j-1
                 right = 2**(j+1)-1
-                func = np.zeros(cascade.value[j][0].shape, dtype=float)
-                for r in xrange(cascade.R):
-                    func += gammaln(cascade.value[j][r] + omega.estim[j] * x[left:right]) \
-                        + gammaln(cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
-                        - gammaln(omega.estim[j] * x[left:right]) - gammaln(omega.estim[j] * (1 - x[left:right]))
+                func = np.zeros(data.value[j][0].shape, dtype=float)
+                for r in xrange(data.R):
+                    func += gammaln(data.value[j][r] + tau.estim[j] * x[left:right]) \
+                        + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
+                        - gammaln(tau.estim[j] * x[left:right]) - gammaln(tau.estim[j] * (1 - x[left:right]))
                 F += np.sum(func,1)
-            f = -1. * np.sum(eta.estim[:,1] * F)
+            f = -1. * np.sum(zeta.estim[:,1] * F)
             return f
 
         def gradient(x, kwargs):
-            cascade = kwargs['cascade']
-            eta = kwargs['eta']
-            omega = kwargs['omega']
+            """Computes gradient of the likelihood function with respect to `pi`.
+            """
+
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            tau = kwargs['tau']
 
             Df = np.zeros(x.shape, dtype=float)
             for j in xrange(self.J):
                 left = 2**j-1
                 right = 2**(j+1)-1
-                df = np.zeros(cascade.value[j][0].shape, dtype=float)
-                for r in xrange(cascade.R):
-                    df += digamma(cascade.value[j][r] + omega.estim[j] * x[left:right]) \
-                    - digamma(cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
-                    - digamma(omega.estim[j] * x[left:right]) + digamma(omega.estim[j] * (1 - x[left:right]))
-                Df[left:right] = -1. * omega.estim[j] * np.sum(eta.estim[:,1:] * df,0)
+                df = np.zeros(data.value[j][0].shape, dtype=float)
+                for r in xrange(data.R):
+                    df += digamma(data.value[j][r] + tau.estim[j] * x[left:right]) \
+                    - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
+                    - digamma(tau.estim[j] * x[left:right]) + digamma(tau.estim[j] * (1 - x[left:right]))
+                Df[left:right] = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
             return Df
 
         def hessian(x, kwargs):
-            cascade = kwargs['cascade']
-            eta = kwargs['eta']
-            omega = kwargs['omega']
+            """Computes hessian of the likelihood function with respect to `pi`.
+            """
+
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            tau = kwargs['tau']
 
             hess = np.zeros(x.shape, dtype=float)
             for j in xrange(self.J):
                 left = 2**j-1
                 right = 2**(j+1)-1
-                hf = np.zeros(cascade.value[j][0].shape, dtype=float)
-                for r in xrange(cascade.R):
-                    hf += polygamma(1, cascade.value[j][r] + omega.estim[j] * x[left:right]) \
-                    + polygamma(1, cascade.total[j][r] - cascade.value[j][r] + omega.estim[j] * (1 - x[left:right])) \
-                    - polygamma(1, omega.estim[j] * x[left:right]) - polygamma(1, omega.estim[j] * (1 - x[left:right]))
-                hess[left:right] = -1. * omega.estim[j]**2 * np.sum(eta.estim[:,1:] * hf,0)
+                hf = np.zeros(data.value[j][0].shape, dtype=float)
+                for r in xrange(data.R):
+                    hf += polygamma(1, data.value[j][r] + tau.estim[j] * x[left:right]) \
+                    + polygamma(1, data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
+                    - polygamma(1, tau.estim[j] * x[left:right]) - polygamma(1, tau.estim[j] * (1 - x[left:right]))
+                hess[left:right] = -1. * tau.estim[j]**2 * np.sum(zeta.estim[:,1:] * hf,0)
             
             Hf = np.diag(hess)
             return Hf
 
-        # initialize, and set constraints
+        # initialize optimization variable
         xo = np.array([v for j in xrange(self.J) for v in self.value[j]])
+
+        # set constraints for optimization variable
         G = np.vstack((np.diag(-1*np.ones(xo.shape, dtype=float)), \
                 np.diag(np.ones(xo.shape, dtype=float))))
         h = np.vstack((np.zeros((xo.size,1), dtype=float), \
@@ -250,173 +296,220 @@ class Bin(Cascade):
 
         # call optimizer
         x_final = optimizer(xo, function, gradient, hessian, \
-            G=G, h=h, cascade=cascade, eta=eta, omega=omega)
+            G=G, h=h, data=data, zeta=zeta, tau=tau)
 
         if np.isnan(x_final).any():
-            print "Nan in Bin"
+            print "Nan in Pi"
             raise ValueError
 
         if np.isinf(x_final).any():
-            print "Inf in Bin"
+            print "Inf in Pi"
             raise ValueError
 
+        # store optimum in data structure
         self.value = dict([(j,x_final[2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
-        self.update_count += 1
 
 
-class Omega():
+class Tau():
+    """
+    Class to store and update (M-step) the parameter `tau` in the
+    msCentipede model. It is also used for the parameter `tau_o` in
+    the msCentipede-flexbg model.
+
+    Arguments
+        J : int
+        number of scales
+
+    """
 
     def __init__(self, J):
 
         self.J = J
         self.estim = 10*np.random.rand(self.J)
-        self.update_count = 0
 
-    def update(self, cascade, eta, B):
+    def update(self, data, zeta, pi):
+        """Update the estimates of parameter `tau` (and `tau_o`) in the model.
+        """
 
         def function(x, kwargs):
-            cascade = kwargs['cascade']
-            eta = kwargs['eta']
-            B = kwargs['B']
+            """Computes part of the likelihood function that has
+            terms containing `tau`.
+            """
 
-            func = np.zeros(eta.estim[:,1].shape, dtype=float)
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            pi = kwargs['pi']
+
+            func = np.zeros(zeta.estim[:,1].shape, dtype=float)
             # loop over each scale
             for j in xrange(self.J):
 
                 # loop over replicates
-                for r in xrange(cascade.R):
-                    F = gammaln(cascade.value[j][r] + B.value[j] * x[j]) \
-                        + gammaln(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
-                        - gammaln(cascade.total[j][r] + x[j]) + gammaln(x[j]) \
-                        - gammaln(B.value[j] * x[j]) - gammaln((1 - B.value[j]) * x[j])
+                for r in xrange(data.R):
+                    F = gammaln(data.value[j][r] + pi.value[j] * x[j]) \
+                        + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
+                        - gammaln(data.total[j][r] + x[j]) + gammaln(x[j]) \
+                        - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
                     func += np.sum(F, 1)
 
-            F = -1. * np.sum(eta.estim[:,1] * func)
+            F = -1. * np.sum(zeta.estim[:,1] * func)
             return F
 
         def gradient(x, kwargs):
-            cascade = kwargs['cascade']
-            eta = kwargs['eta']
-            B = kwargs['B']
+            """Computes gradient of the likelihood function with respect to `tau`.
+            """
+
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            pi = kwargs['pi']
 
             Df = np.zeros(x.shape, dtype=float)
             # loop over each scale
             for j in xrange(self.J):
 
                 # loop over replicates
-                df = np.zeros(eta.estim[:,1].shape, dtype=float)
-                for r in xrange(cascade.R):
-                    f = B.value[j] * digamma(cascade.value[j][r] + B.value[j] * x[j]) \
-                        + (1 - B.value[j]) * digamma(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
-                        - digamma(cascade.total[j][r] + x[j]) + digamma(x[j]) \
-                        - B.value[j] * digamma(B.value[j] * x[j]) - (1 - B.value[j]) * digamma((1 - B.value[j]) * x[j])
+                df = np.zeros(zeta.estim[:,1].shape, dtype=float)
+                for r in xrange(data.R):
+                    f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x[j]) \
+                        + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
+                        - digamma(data.total[j][r] + x[j]) + digamma(x[j]) \
+                        - pi.value[j] * digamma(pi.value[j] * x[j]) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
                     df += np.sum(f, 1)
-                Df[j] = -1 * np.sum(eta.estim[:,1] * df)
+                Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
 
             return Df
 
         def hessian(x, kwargs):
-            cascade = kwargs['cascade']
-            eta = kwargs['eta']
-            B = kwargs['B']
+            """Computes hessian of the likelihood function with respect to `tau`.
+            """
+
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            pi = kwargs['pi']
 
             hess = np.zeros(x.shape, dtype=float)
+            # loop over each scale
             for j in xrange(self.J):
 
                 # loop over replicates
-                hf = np.zeros(eta.estim[:,1].shape, dtype=float)
-                for r in xrange(cascade.R):
-                    f = B.value[j]**2 * polygamma(1, cascade.value[j][r] + B.value[j] * x[j]) \
-                        + (1 - B.value[j])**2 * polygamma(1, cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * x[j]) \
-                        - polygamma(1, cascade.total[j][r] + x[j]) + polygamma(1, x[j]) \
-                        - B.value[j]**2 * polygamma(1, B.value[j] * x[j]) \
-                        - (1 - B.value[j])**2 * polygamma(1, (1 - B.value[j]) * x[j])
+                hf = np.zeros(zeta.estim[:,1].shape, dtype=float)
+                for r in xrange(data.R):
+                    f = pi.value[j]**2 * polygamma(1, data.value[j][r] + pi.value[j] * x[j]) \
+                        + (1 - pi.value[j])**2 * polygamma(1, data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
+                        - polygamma(1, data.total[j][r] + x[j]) + polygamma(1, x[j]) \
+                        - pi.value[j]**2 * polygamma(1, pi.value[j] * x[j]) \
+                        - (1 - pi.value[j])**2 * polygamma(1, (1 - pi.value[j]) * x[j])
                     hf += np.sum(f, 1)
-                hess[j] = -1 * np.sum(eta.estim[:,1] * hf)
+                hess[j] = -1 * np.sum(zeta.estim[:,1] * hf)
 
             Hf = np.diag(hess)
             return Hf
 
-        # set constraints
+        # initialize optimization variables
         xo = self.estim.copy()
+
+        # set constraints for optimization variables
         G = np.diag(-1 * np.ones(xo.shape, dtype=float))
         h = np.zeros((xo.size,1), dtype=float)
 
         # call optimizer
         x_final = optimizer(xo, function, gradient, hessian, \
-            G=G, h=h, cascade=cascade, eta=eta, B=B)
+            G=G, h=h, data=data, zeta=zeta, pi=pi)
         self.estim = x_final.reshape(self.estim.shape)
 
         if np.isnan(self.estim).any():
-            print "Nan in Omega"
+            print "Nan in Tau"
             raise ValueError
 
         if np.isinf(self.estim).any():
-            print "Inf in Omega"
+            print "Inf in Tau"
             raise ValueError
-
-        self.update_count += 1
 
 
 class Alpha():
+    """
+    Class to store and update (M-step) the parameter `alpha` in negative 
+    binomial part of the msCentipede model. There is a separate parameter
+    for bound and unbound states, for each replicate.
 
-    def __init__(self, R=1):
+    Arguments
+        R : int
+        number of replicate measurements
+
+    """
+
+    def __init__(self, R):
 
         self.R = R
         self.estim = np.random.rand(self.R,2)*10
-        self.update_count = 0
 
-    def update(self, eta, tau):
+    def update(self, zeta, omega):
+        """Update the estimates of parameter `alpha` in the model.
+        """
 
         def function(x, kwargs):
-            eta = kwargs['eta']
-            tau = kwargs['tau']
-            constant = kwargs['constant']
-            etaestim = kwargs['etaestim']
+            """Computes part of the likelihood function that has
+            terms containing `alpha`.
+            """
 
-            func = np.array([outsum(gammaln(eta.total[:,r:r+1] + x[2*r:2*r+2]) * eta.estim) \
-                    - gammaln(x[2*r:2*r+2]) * etaestim[0] + constant[r] * x[2*r:2*r+2] \
-                    for r in xrange(tau.R)])
+            zeta = kwargs['zeta']
+            omega = kwargs['omega']
+            constant = kwargs['constant']
+            zetaestim = kwargs['zetaestim']
+
+            func = np.array([outsum(gammaln(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim) \
+                    - gammaln(x[2*r:2*r+2]) * zetaestim[0] + constant[r] * x[2*r:2*r+2] \
+                    for r in xrange(omega.R)])
             f = -1.*func.sum()
             return f
 
         def gradient(x, kwargs):
-            eta = kwargs['eta']
-            tau = kwargs['tau']
-            etaestim = kwargs['etaestim']
+            """Computes gradient of the likelihood function with 
+            respect to `omega`.
+            """
+
+            zeta = kwargs['zeta']
+            omega = kwargs['omega']
+            zetaestim = kwargs['zetaestim']
             constant = kwargs['constant']
 
             df = []
-            for r in xrange(tau.R):
-                df.append(outsum(digamma(eta.total[:,r:r+1] + x[2*r:2*r+2]) * eta.estim)[0] \
-                    - digamma(x[2*r:2*r+2]) * etaestim[0] + constant[r])
+            for r in xrange(omega.R):
+                df.append(outsum(digamma(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
+                    - digamma(x[2*r:2*r+2]) * zetaestim[0] + constant[r])
             Df = -1. * np.hstack(df)
             return Df
 
         def hessian(x, kwargs):
-            eta = kwargs['eta']
-            tau = kwargs['tau']
-            etaestim = kwargs['etaestim']
+            """Computes hessian of the likelihood function with 
+            respect to `omega`.
+            """
+
+            zeta = kwargs['zeta']
+            omega = kwargs['omega']
+            zetaestim = kwargs['zetaestim']
             constant = kwargs['constant']
             
             hess = []
-            for r in xrange(tau.R):
-                hess.append(outsum(polygamma(1, eta.total[:,r:r+1] + x[2*r:2*r+2]) * eta.estim)[0] \
-                    - polygamma(1, x[2*r:2*r+2]) * etaestim[0])
+            for r in xrange(omega.R):
+                hess.append(outsum(polygamma(1, zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
+                    - polygamma(1, x[2*r:2*r+2]) * zetaestim[0])
             Hf = -1. * np.diag(np.hstack(hess))
             return Hf
 
-        constant = [nplog(tau.estim[r]) * outsum(eta.estim)[0] for r in xrange(self.R)]
-        etaestim = outsum(eta.estim)
+        constant = [nplog(omega.estim[r]) * outsum(zeta.estim)[0] for r in xrange(self.R)]
+        zetaestim = outsum(zeta.estim)
+
+        # initialize optimization variables
         xo = self.estim.ravel()
 
-        # set constraints
+        # set constraints for optimization variables
         G = np.diag(-1 * np.ones(xo.shape, dtype=float))
         h = np.zeros((xo.size,1), dtype=float)
 
         # call optimizer
         x_final = optimizer(xo, function, gradient, hessian, \
-            G=G, h=h, tau=tau, eta=eta, constant=constant, etaestim=etaestim)
+            G=G, h=h, omega=omega, zeta=zeta, constant=constant, zetaestim=zetaestim)
         self.estim = x_final.reshape(self.estim.shape)
 
         if np.isnan(self.estim).any():
@@ -427,66 +520,97 @@ class Alpha():
             print "Inf in Alpha"
             raise ValueError
 
-        self.update_count += 1
 
+class Omega():
+    """
+    Class to store and update (M-step) the parameter `omega` in negative 
+    binomial part of the msCentipede model. There is a separate parameter
+    for bound and unbound states, for each replicate.
 
-class Tau():
+    Arguments
+        R : int
+        number of replicate measurements
 
-    def __init__(self, R=1):
+    """
+
+    def __init__(self, R):
 
         self.R = R
         self.estim = np.random.rand(self.R,2)
         self.estim[:,1] = self.estim[:,1]/100
-        self.update_count = 0
 
-    def update(self, eta, alpha):
+    def update(self, zeta, alpha):
+        """Update the estimates of parameter `omega` in the model.
+        """
 
-        numerator = outsum(eta.estim)[0] * alpha.estim
-        denominator = np.array([outsum(eta.estim * (estim + eta.total[:,r:r+1]))[0] \
+        numerator = outsum(zeta.estim)[0] * alpha.estim
+        denominator = np.array([outsum(zeta.estim * (estim + zeta.total[:,r:r+1]))[0] \
             for r,estim in enumerate(alpha.estim)])
         self.estim = numerator / denominator
 
         if np.isnan(self.estim).any():
-            print "Nan in Tau"
+            print "Nan in Omega"
             raise ValueError
 
         if np.isinf(self.estim).any():
-            print "Inf in Tau"
+            print "Inf in Omega"
             raise ValueError
-
-        self.update_count += 1
 
 
 class Beta():
+    """
+    Class to store and update (M-step) the parameter `beta` in the logistic
+    function in the prior of the msCentipede model.
+
+    Arguments
+        scores : array
+        an array of scores for each motif instance. these could include
+        PWM score, conservation score, a measure of various histone
+        modifications, outputs from other algorithms, etc.
+
+    """
 
     def __init__(self, scores):
     
         self.S = scores.shape[1]
         self.estim = np.random.rand(self.S)
-        self.update_count = 0
 
-    def update(self, scores, eta):
+    def update(self, scores, zeta):
+        """Update the estimates of parameter `beta` in the model.
+        """
 
         def function(x, kwargs):
+            """Computes part of the likelihood function that has
+            terms containing `beta`.
+            """
+
             scores = kwargs['scores']
-            eta = kwargs['eta']
+            zeta = kwargs['zeta']
 
             arg = insum(x * scores,[1])
-            func = arg * eta.estim[:,1:] - nplog(1 + np.exp(arg))
+            func = arg * zeta.estim[:,1:] - nplog(1 + np.exp(arg))
             f = -1. * func.sum()
             return f
 
         def gradient(x, kwargs):
+            """Computes gradient of the likelihood function with 
+            respect to `beta`.
+            """
+
             scores = kwargs['scores']
-            eta = kwargs['eta']
+            zeta = kwargs['zeta']
 
             arg = insum(x * scores,[1])
-            Df = -1 * np.sum(scores * (eta.estim[:,1:] - logistic(-arg)),0)
+            Df = -1 * np.sum(scores * (zeta.estim[:,1:] - logistic(-arg)),0)
             return Df
 
         def hessian(x, kwargs):
+            """Computes hessian of the likelihood function with 
+            respect to `beta`.
+            """
+
             scores = kwargs['scores']
-            eta = kwargs['eta']
+            zeta = kwargs['zeta']
 
             arg = insum(x * scores,[1])
             larg = scores * logistic(arg) * logistic(-arg)
@@ -494,7 +618,7 @@ class Beta():
             return Hf
 
         xo = self.estim.copy()
-        self.estim = optimizer(xo, function, gradient, hessian, scores=scores, eta=eta)
+        self.estim = optimizer(xo, function, gradient, hessian, scores=scores, zeta=zeta)
 
         if np.isnan(self.estim).any():
             print "Nan in Beta"
@@ -502,14 +626,32 @@ class Beta():
 
         if np.isinf(self.estim).any():
             print "Inf in Beta"
-            raise ValueError
-
-        self.update_count += 1        
+            raise ValueError        
 
 
 def optimizer(xo, function, gradient, hessian, **kwargs):
+    """Calls the appropriate nonlinear convex optimization solver 
+    in the package `cvxopt` to find optimal values for the relevant
+    parameters, given subroutines that evaluate a function, 
+    its gradient, and hessian, this subroutine 
+
+    Arguments
+        function : function object
+        evaluates the function at the specified parameter values
+
+        gradient : function object
+        evaluates the gradient of the function
+
+        hessian : function object
+        evaluates the hessian of the function
+
+    """
 
     def F(x=None, z=None):
+        """A subroutine that the cvxopt package can call to get 
+        values of the function, gradient and hessian during
+        optimization.
+        """
 
         if x is None:
             return 0, cvx.matrix(x_init)
@@ -537,96 +679,164 @@ def optimizer(xo, function, gradient, hessian, **kwargs):
         Hf = z[0] * hess
         return cvx.matrix(f), cvx.matrix(Df), cvx.matrix(Hf)
 
-    # run the optimizer
+    # warm start for the optimization
     optimized = False
     V = xo.size
-    # warm start
     x_init = xo.reshape(V,1)
+
     while not optimized:
+
         try:
+
+            # call the optimization subroutine in cvxopt
             if kwargs.has_key('G'):
+                # call a constrained nonlinear solver
                 solution = solvers.cp(F, G=cvx.matrix(kwargs['G']), h=cvx.matrix(kwargs['h']))
             else:
+                # call an unconstrained nonlinear solver
                 solution = solvers.cp(F)
+
+            # check if optimal value has been reached; 
+            # if not, re-optimize with a cold start
             if solution['status']=='optimal':
                 optimized = True
                 x_final = np.array(solution['x']).ravel()
             else:
                 # cold start
                 x_init = np.random.rand(V,1)
+
         except ValueError:
-            # cold start
+
+            # if any parameter becomes Inf or Nan during optimization,
+            # re-optimize with a cold start
             x_init = np.random.rand(V,1)
 
     return x_final
 
 
-def likelihoodAB(cascade, B, omega, B_null, omega_null, model):
+def compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model):
+    """Evaluates the likelihood function for the 
+    footprint part of the bound model and background model.
 
-    lhoodA = Cascade()
-    lhoodB = Cascade()
+    Arguments
+        data : Data
+        transformed read count data 
 
-    for j in xrange(cascade.J):
-        value = outsum(cascade.value[j])[0]
-        total = outsum(cascade.total[j])[0]
-            
+        pi : Pi
+        estimate of mean footprint parameters at bound sites
+
+        tau : Tau
+        estimate of footprint heterogeneity at bound sites
+
+        pi_null : Pi
+        estimate of mean cleavage pattern at unbound sites
+
+        tau_null : Tau or None
+        estimate of cleavage heterogeneity at unbound sites
+
+        model : string 
+        {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
+
+    """
+
+    lhood_bound = Data()
+    lhood_unbound = Data()
+
+    for j in xrange(data.J):
+        value = outsum(data.value[j])[0]
+        total = outsum(data.total[j])[0]
+        
+        lhood_bound.value[j] = outsum([gammaln(data.value[j][r] + pi.value[j] * tau.estim[j]) \
+            + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * tau.estim[j]) \
+            - gammaln(data.total[j][r] + tau.estim[j]) + gammaln(tau.estim[j]) \
+            - gammaln(pi.value[j] * tau.estim[j]) - gammaln((1 - pi.value[j]) * tau.estim[j]) \
+            for r in xrange(data.R)])[0]
+
         if model in ['msCentipede','msCentipede_flexbgmean']:
             
-            lhoodA.value[j] = outsum([gammaln(cascade.value[j][r] + B.value[j] * omega.estim[j]) \
-                + gammaln(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * omega.estim[j]) \
-                - gammaln(cascade.total[j][r] + omega.estim[j]) + gammaln(omega.estim[j]) \
-                - gammaln(B.value[j] * omega.estim[j]) - gammaln((1 - B.value[j]) * omega.estim[j]) \
-                for r in xrange(cascade.R)])[0]
-            
-            lhoodB.value[j] = value * nplog(B_null.value[j]) \
-                + (total - value) * nplog(1 - B_null.value[j])
+            lhood_unbound.value[j] = value * nplog(pi_null.value[j]) \
+                + (total - value) * nplog(1 - pi_null.value[j])
     
         elif model=='msCentipede_flexbg':
             
-            lhoodA.value[j] = outsum([gammaln(cascade.value[j][r] + B.value[j] * omega.estim[j]) \
-                + gammaln(cascade.total[j][r] - cascade.value[j][r] + (1 - B.value[j]) * omega.estim[j]) \
-                - gammaln(cascade.total[j][r] + omega.estim[j]) + gammaln(omega.estim[j]) \
-                - gammaln(B.value[j] * omega.estim[j]) - gammaln((1 - B.value[j]) * omega.estim[j]) \
-                for r in xrange(cascade.R)])[0]
-            
-            lhoodB.value[j] = outsum([gammaln(cascade.value[j][r] + B_null.value[j] * omega_null.estim[j]) \
-                + gammaln(cascade.total[j][r] - cascade.value[j][r] + (1 - B_null.value[j]) * omega_null.estim[j]) \
-                - gammaln(cascade.total[j][r] + omega_null.estim[j]) + gammaln(omega_null.estim[j]) \
-                - gammaln(B_null.value[j] * omega_null.estim[j]) - gammaln((1 - B_null.value[j]) * omega_null.estim[j]) \
-                for r in xrange(cascade.R)])[0]
+            lhood_unbound.value[j] = outsum([gammaln(data.value[j][r] + pi_null.value[j] * tau_null.estim[j]) \
+                + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi_null.value[j]) * tau_null.estim[j]) \
+                - gammaln(data.total[j][r] + tau_null.estim[j]) + gammaln(tau_null.estim[j]) \
+                - gammaln(pi_null.value[j] * tau_null.estim[j]) - gammaln((1 - pi_null.value[j]) * tau_null.estim[j]) \
+                for r in xrange(data.R)])[0]
 
-    return lhoodA, lhoodB
+    return lhood_bound, lhood_unbound
 
 
-def likelihood(cascade, scores, eta, B, omega, \
-    alpha, beta, tau, B_null, omega_null, model):
+def likelihood(data, scores, zeta, pi, tau, \
+    alpha, beta, omega, pi_null, tau_null, model):
+    """Evaluates the likelihood function of the full
+    model, given estimates of model parameters.
+
+    Arguments
+        data : Data
+        transformed read count data
+
+        scores : array
+        an array of scores for each motif instance. these could include
+        PWM score, conservation score, a measure of various histone
+        modifications, outputs from other algorithms, etc.
+
+        zeta : zeta
+        expected value of factor binding state for each site.
+
+        pi : Pi
+        estimate of mean footprint parameters at bound sites
+
+        tau : Tau
+        estimate of footprint heterogeneity at bound sites
+
+        alpha : Alpha
+        estimate of negative binomial parameters for each replicate
+
+        beta : Beta
+        weights for various scores in the logistic function 
+
+        omega : Omega
+        estimate of negative binomial parameters for each replicate
+
+        pi_null : Pi
+        estimate of mean cleavage pattern at unbound sites
+
+        tau_null : Tau or None
+        estimate of cleavage heterogeneity at unbound sites
+
+        model : string
+        {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
+
+    """
 
     apriori = insum(beta.estim * scores,[1])
 
-    lhoodA, lhoodB = likelihoodAB(cascade, B, omega, B_null, omega_null, model)
+    lhoodA, lhoodB = likelihoodAB(data, pi, tau, pi_null, tau_null, model)
 
-    footprint = np.zeros((cascade.N,1),dtype=float)
-    for j in xrange(cascade.J):
+    footprint = np.zeros((data.N,1),dtype=float)
+    for j in xrange(data.J):
         footprint += insum(lhoodA.value[j],[1])
 
-    P_1 = footprint + insum(gammaln(eta.total + alpha.estim[:,1]) - gammaln(alpha.estim[:,1]) \
-        + alpha.estim[:,1] * nplog(tau.estim[:,1]) + eta.total * nplog(1 - tau.estim[:,1]), [1])
+    P_1 = footprint + insum(gammaln(zeta.total + alpha.estim[:,1]) - gammaln(alpha.estim[:,1]) \
+        + alpha.estim[:,1] * nplog(omega.estim[:,1]) + zeta.total * nplog(1 - omega.estim[:,1]), [1])
     P_1[P_1==np.inf] = MAX
     P_1[P_1==-np.inf] = -MAX
 
-    null = np.zeros((cascade.N,1), dtype=float)
-    for j in xrange(cascade.J):
+    null = np.zeros((data.N,1), dtype=float)
+    for j in xrange(data.J):
         null += insum(lhoodB.value[j],[1])
 
-    P_0 = null + insum(gammaln(eta.total + alpha.estim[:,0]) - gammaln(alpha.estim[:,0]) \
-        + alpha.estim[:,0] * nplog(tau.estim[:,0]) + eta.total * nplog(1 - tau.estim[:,0]), [1])
+    P_0 = null + insum(gammaln(zeta.total + alpha.estim[:,0]) - gammaln(alpha.estim[:,0]) \
+        + alpha.estim[:,0] * nplog(omega.estim[:,0]) + zeta.total * nplog(1 - omega.estim[:,0]), [1])
     P_0[P_0==np.inf] = MAX
     P_0[P_0==-np.inf] = -MAX
 
-    L = P_0 * eta.estim[:,:1] + insum(P_1 * eta.estim[:,1:],[1]) + apriori * (1 - eta.estim[:,:1]) \
-        - nplog(1 + np.exp(apriori)) - insum(eta.estim * nplog(eta.estim),[1])
+    L = P_0 * zeta.estim[:,:1] + insum(P_1 * zeta.estim[:,1:],[1]) + apriori * (1 - zeta.estim[:,:1]) \
+        - nplog(1 + np.exp(apriori)) - insum(zeta.estim * nplog(zeta.estim),[1])
     
-    L = L.sum()
+    L = L.sum() / data.N
 
     if np.isnan(L):
         print "Nan in LogLike"
@@ -639,39 +849,119 @@ def likelihood(cascade, scores, eta, B, omega, \
     return L
 
 
-def EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_null, model):
+def EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model):
+    """This subroutine updates all model parameters once and computes an
+    estimate of the posterior probability of binding.
+
+    Arguments
+        data : Data
+        transformed read count data
+
+        scores : array
+        an array of scores for each motif instance. these could include
+        PWM score, conservation score, a measure of various histone
+        modifications, outputs from other algorithms, etc.
+
+        zeta : zeta
+        expected value of factor binding state for each site.
+
+        pi : Pi
+        estimate of mean footprint parameters at bound sites
+
+        tau : Tau
+        estimate of footprint heterogeneity at bound sites
+
+        alpha : Alpha
+        estimate of negative binomial parameters for each replicate
+
+        beta : Beta
+        weights for various scores in the logistic function 
+
+        omega : Omega
+        estimate of negative binomial parameters for each replicate
+
+        pi_null : Pi
+        estimate of mean cleavage pattern at unbound sites
+
+        tau_null : Tau or None
+        estimate of cleavage heterogeneity at unbound sites
+
+        model : string
+        {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
+
+    """
+
 
     # update binding posteriors
-    eta.update(cascade, scores, B, omega, \
-            alpha, beta, tau, B_null, omega_null, model)
+    zeta.update(data, scores, pi, tau, \
+            alpha, beta, omega, pi_null, tau_null, model)
 
     # update multi-scale parameters
     starttime = time.time()
-    B.update(cascade, eta, omega)
+    pi.update(data, zeta, tau)
     print "p_jk update in %.3f secs"%(time.time()-starttime)
 
     starttime = time.time()
-    omega.update(cascade, eta, B)
-    print "omega update in %.3f secs"%(time.time()-starttime)
+    tau.update(data, zeta, pi)
+    print "tau update in %.3f secs"%(time.time()-starttime)
     
     # update negative binomial parameters
     starttime = time.time()
-    tau.update(eta, alpha)
-    print "tau update in %.3f secs"%(time.time()-starttime)
+    omega.update(zeta, alpha)
+    print "omega update in %.3f secs"%(time.time()-starttime)
 
     starttime = time.time()
-    alpha.update(eta, tau)
+    alpha.update(zeta, omega)
     print "alpha update in %.3f secs"%(time.time()-starttime)
 
     # update prior parameters
     starttime = time.time()
-    beta.update(scores, eta)
+    beta.update(scores, zeta)
     print "beta update in %.3f secs"%(time.time()-starttime)
 
 
-def square_EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_null, model):
+def square_EM(data, scores, eta, pi, tau, alpha, beta, omega, pi_null, tau_null, model):
+    """Accelerated update of model parameters and posterior probability of binding.
 
-    parameters = [B, omega, alpha, tau]
+    Arguments
+        data : Data
+        transformed read count data
+
+        scores : array
+        an array of scores for each motif instance. these could include
+        PWM score, conservation score, a measure of various histone
+        modifications, outputs from other algorithms, etc.
+
+        zeta : zeta
+        expected value of factor binding state for each site.
+
+        pi : Pi
+        estimate of mean footprint parameters at bound sites
+
+        tau : Tau
+        estimate of footprint heterogeneity at bound sites
+
+        alpha : Alpha
+        estimate of negative binomial parameters for each replicate
+
+        beta : Beta
+        weights for various scores in the logistic function 
+
+        omega : Omega
+        estimate of negative binomial parameters for each replicate
+
+        pi_null : Pi
+        estimate of mean cleavage pattern at unbound sites
+
+        tau_null : Tau or None
+        estimate of cleavage heterogeneity at unbound sites
+
+        model : string
+        {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
+
+    """
+
+    parameters = [B, tau, alpha, omega]
     oldvar = []
     for parameter in parameters:
         try:
@@ -680,10 +970,9 @@ def square_EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_nu
             oldvar.append(np.hstack([parameter.value[j].copy() for j in xrange(parameter.J)]))
     oldvars = [oldvar]
 
+    # take two update steps
     for step in [0,1]:
-        EM(cascade, scores, eta, B, omega, \
-                alpha, beta, tau, \
-                B_null, omega_null, model)
+        EM(data, scores, eta, B, tau, alpha, beta, omega, B_null, tau_null, model)
         oldvar = []
         for parameter in parameters:
             try:
@@ -699,15 +988,19 @@ def square_EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_nu
     if a>-1:
         a = -1.
 
+    # given two update steps, compute an optimal step that achieves
+    # a better likelihood than the best of the two steps.
     a_ok = False
     while not a_ok:
         invalid = np.zeros((0,), dtype='bool')
         for parameter,varA,varB,varC in zip(parameters,oldvars[0],oldvars[1],oldvars[2]):
             try:
                 parameter.estim = (1+a)**2*varA - 2*a*(1+a)*varB + a**2*varC
+                # ensure constraints on variables are satisfied
                 invalid = np.hstack((invalid,(parameter.estim<=0).ravel()))
             except AttributeError:
                 newparam = (1+a)**2*varA - 2*a*(1+a)*varB + a**2*varC
+                # ensure constraints on variables are satisfied
                 invalid = np.hstack((invalid, np.logical_or(newparam<0, newparam>1)))
                 parameter.value = dict([(j,newparam[2**j-1:2**(j+1)-1]) \
                     for j in xrange(self.J)])
@@ -718,67 +1011,105 @@ def square_EM(cascade, scores, eta, B, omega, alpha, beta, tau, B_null, omega_nu
         else:
             a_ok = True
 
-    EM(cascade, scores, eta, B, omega, \
-                alpha, beta, tau, \
-                B_null, omega_null, model)
+    EM(data, scores, eta, B, tau, alpha, beta, omega, B_null, tau_null, model)
 
 
-def infer(reads, totalreads, scores, background, model, restarts, mintol):
+def estimate_optimal_model(reads, totalreads, scores, background, model, restarts, mintol):
+    """Learn the model parameters by running an EM algorithm till convergence.
+    Return the optimal parameter estimates from a number of EM results starting 
+    from random restarts.
 
-    cascade = Cascade(reads)
-    cascade_null = Cascade(background)
-    scores = np.hstack((np.ones((cascade.N,1), dtype=float), scores))
+    Arguments
+        reads : array
+        array of read counts at each base in a genomic window,
+        across motif instances and several measurement replicates.
+
+        totalreads : array
+        array of total read counts in a genomic window,
+        across motif instances and several measurement replicates.
+        the size of the genomic window can be different for 
+        `reads` and `totalreads`.
+
+        scores : array
+        an array of scores for each motif instance. these could include
+        PWM score, conservation score, a measure of various histone
+        modifications, outputs from other algorithms, etc.
+
+        background : array
+        a uniform, normalized array for a uniform background model.
+        when sequencing reads from genomic DNA are available, this
+        is an array of read counts at each base in a genomic window,
+        across motif instances.
+
+        model : string
+        {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
+
+        restarts : int
+        number of independent runs of model learning
+
+        mintol : float
+        convergence criterion
+
+    """
+
+    # transform data into multiscale representation
+    data = Data(reads)
+    data_null = Data(background)
+    scores = np.hstack((np.ones((data.N,1), dtype=float), scores))
     del reads
 
     # set background model
-    B_null = Bin(cascade_null.J)
-    for j in xrange(B_null.J):
-        B_null.value[j] = np.sum(np.sum(cascade_null.value[j],0),0) / np.sum(np.sum(cascade_null.total[j],0),0).astype('float')
-    omega_null = None
+    pi_null = Pi(data_null.J)
+    for j in xrange(pi_null.J):
+        pi_null.value[j] = np.sum(np.sum(data_null.value[j],0),0) / np.sum(np.sum(data_null.total[j],0),0).astype('float')
+    tau_null = None
         
     if model=='msCentipede_flexbg':
         
-        omega_null = Omega(cascade_null.J)
+        tau_null = Tau(data_null.J)
 
-        eta_null = Eta(cascade_null, background.sum(1))
-        eta_null.estim[:,1] = 1
-        eta_null.estim[:,0] = 0
+        zeta_null = Zeta(data_null, background.sum(1))
+        zeta_null.estim[:,1] = 1
+        zeta_null.estim[:,0] = 0
 
         # iterative update of background model; 
         # evaluate convergence based on change in estimated
         # background overdispersion
         change = np.inf
-        while change>1e-1:
-            change = omega_null.estim.copy()
+        while change>1e-2:
+            change = tau_null.estim.copy()
             
-            omega_null.update(cascade_null, eta_null, B_null)
-            B_null.update(cascade_null, eta_null, omega_null)
+            tau_null.update(data_null, zeta_null, pi_null)
+            pi_null.update(data_null, zeta_null, tau_null)
 
-            change = np.abs(change-omega_null.estim).sum()
+            change = np.abs(change-tau_null.estim).sum()
 
     maxLoglike = -np.inf
     restart = 0
+    err = 1
     while restart<restarts:
 
         try:
             # initialize multi-scale model parameters
-            B = Bin(cascade.J)
-            omega = Omega(cascade.J)
+            pi = Pi(data.J)
+            tau = Tau(data.J)
 
             # initialize negative binomial parameters
-            alpha = Alpha(R=cascade.R)
-            tau = Tau(R=cascade.R)
+            alpha = Alpha(data.R)
+            omega = Omega(data.R)
 
             # initialize prior parameters
             beta = Beta(scores)
 
             # initialize posterior over latent variables
-            eta = Eta(cascade, totalreads, model=model)
-            for j in xrange(B.J):
-                B.value[j] = np.sum(cascade.value[j][0]*eta.estim[:,1:],0) / np.sum(cascade.total[j][0]*eta.estim[:,1:],0).astype('float')
+            zeta = Zeta(data, totalreads)
+            for j in xrange(pi.J):
+                pi.value[j] = np.sum(data.value[j][0] * zeta.estim[:,1:],0) \
+                    / np.sum(data.total[j][0] * zeta.estim[:,1:],0).astype('float')
 
-            Loglike = likelihood(cascade, scores, eta, B, omega, \
-                    alpha, beta, tau, B_null, omega_null, model)
+            # initial log likelihood of the model
+            Loglike = likelihood(data, scores, zeta, pi, tau, \
+                    alpha, beta, omega, pi_null, tau_null, model)
 
             tol = np.inf
             iter = 0
@@ -786,87 +1117,134 @@ def infer(reads, totalreads, scores, background, model, restarts, mintol):
             while np.abs(tol)>mintol:
 
                 itertime = time.time()
-                square_EM(cascade, scores, eta, B, omega, \
-                        alpha, beta, tau, B_null, omega_null, model)
+                square_EM(data, scores, zeta, pi, tau, \
+                        alpha, beta, omega, pi_null, tau_null, model)
 
-                # compute likelihood every 10 iterations
-                if (iter+1)%1==0:
+                newLoglike = likelihood(data, scores, zeta, pi, tau, \
+                        alpha, beta, omega, pi_null, tau_null, model)
 
-                    newLoglike = likelihood(cascade, scores, eta, B, omega, \
-                            alpha, beta, tau, B_null, omega_null, model)
+                tol = newLoglike - Loglike
+                Loglike = newLoglike
+                print iter+1, Loglike, tol, time.time()-itertime
 
-                    tol = newLoglike - Loglike
-                    Loglike = newLoglike
-                    print iter+1, newLoglike, tol, time.time()-itertime
-
-                iter += 1
-
-            # test if bound sites have more total reads than unbound sites;
-            # avoids local optima issues.
-            negbinmeans = alpha.estim*(1-tau.estim)/tau.estim
+            # test if mean cleavage rate at bound sites is greater than at 
+            # unbound sites, for each replicate; avoids local optima issues.
+            negbinmeans = alpha.estim * (1-omega.estim)/omega.estim
             if np.any(negbinmeans[:,0]<negbinmeans[:,1]):
                 restart += 1
+                # choose these parameter estimates, if the likelihood is greater.
                 if Loglike>maxLoglike:
                     maxLoglikeres = Loglike
                     if model in ['msCentipede','msCentipede_flexbgmean']:
-                        footprint_model = (B, omega, B_null)
+                        footprint_model = (pi, tau, pi_null)
                     elif model=='msCentipede_flexbg':
-                        footprint_model = (B, omega, B_null, omega_null)
-                    count_model = (alpha, tau)
+                        footprint_model = (pi, tau, pi_null, tau_null)
+                    count_model = (alpha, omega)
                     prior = beta
 
-        except ValueError as err:
+        except ValueError:
 
-            print "restarting inference"
+            print "encountered an invalid value"
+            if err<5:
+                print "restarting learning ... %d"%err
+                err += 1
+            else:
+                print "Error in learning model parameters. Please ensure the inputs are all valid"
+                sys.exit(1)
 
     return footprint_model, count_model, prior
 
 
-def decode(reads, totalreads, scores, background, footprint, negbinparams, prior, model):
+def infer_binding_posterior(reads, totalreads, scores, background, footprint, negbinparams, prior, model):
+    """Infer posterior probability of factor binding, given optimal model parameters.
+
+    Arguments
+        reads : array
+        array of read counts at each base in a genomic window,
+        across motif instances and several measurement replicates.
+
+        totalreads : array
+        array of total read counts in a genomic window,
+        across motif instances and several measurement replicates.
+        the size of the genomic window can be different for 
+        `reads` and `totalreads`.
+
+        scores : array
+        an array of scores for each motif instance. these could include
+        PWM score, conservation score, a measure of various histone
+        modifications, outputs from other algorithms, etc.
+
+        background : array
+        a uniform, normalized array for a uniform background model.
+        when sequencing reads from genomic DNA are available, this
+        is an array of read counts at each base in a genomic window,
+        across motif instances.
+
+        footprint : tuple
+        (Pi, Tau) instances
+        estimate of footprint model parameters
+
+        negbinparams : tuple
+        (Alpha, Omega) instances
+        estimate of negative binomial model parameters
+
+        prior : Beta
+        estimate of weights in logistic function in the prior
+
+        model : string
+        {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
+
+    """
 
     (N,L,R) = reads.shape
-    cascade = Cascade(reads)
-    cascade_null = Cascade(background)
-    scores = np.hstack((np.ones((cascade.N,1), dtype=float), scores))
+    data = Data(reads)
+    data_null = Data(background)
+    scores = np.hstack((np.ones((data.N,1), dtype=float), scores))
     del reads
 
     # negative binomial parameters
     alpha = negbinparams[0]
-    tau = negbinparams[1]
+    omega = negbinparams[1]
+    
+    # weights in logistic function in the prior
     beta = prior
 
     # multiscale parameters
-    B = footprint[0]
-    omega = footprint[1]
+    pi = footprint[0]
+    tau = footprint[1]
     
     # setting background model
-    B_null = footprint[2]
-    for j in xrange(B_null.J):
-        B_null.value[j] = np.sum(np.sum(cascade_null.value[j],0),0) / np.sum(np.sum(cascade_null.total[j],0),0).astype('float')
-    omega_null = None
+    pi_null = footprint[2]
+    for j in xrange(pi_null.J):
+        pi_null.value[j] = np.sum(np.sum(data_null.value[j],0),0) \
+            / np.sum(np.sum(data_null.total[j],0),0).astype('float')
+    tau_null = None
 
     if model=='msCentipede_flexbg':
 
-        omega_null = footprint[3]
+        tau_null = footprint[3]
 
-        eta_null = Eta(cascade_null, background.sum(1))
-        eta_null.estim[:,1] = 1
-        eta_null.estim[:,0] = 0
+        zeta_null = Zeta(data_null, background.sum(1))
+        zeta_null.estim[:,1] = 1
+        zeta_null.estim[:,0] = 0
 
         # iterative update of background model, when
         # accounting for overdispersion
         change = np.inf
         while change>1e-1:
-            change = omega_null.estim.copy()
+            change = tau_null.estim.copy()
             
-            B_null.update(cascade_null, eta_null, omega_null)
+            pi_null.update(data_null, zeta_null, tau_null)
 
-            omega_null.update(cascade_null, eta_null, B_null)
+            tau_null.update(data_null, zeta_null, pi_null)
 
-            change = np.abs(change-omega_null.estim).sum()
+            change = np.abs(change-tau_null.estim).sum()
 
-    eta = Eta(cascade, totalreads, scores, \
-            B=B, omega=omega, B_null=B_null, omega_null=omega_null, \
-            beta=beta, alpha=alpha, tau=tau, model=model)
+    zeta = Zeta(data, totalreads, infer=True)
+
+    zeta.infer(data, scores, pi, tau, alpha, beta, omega, \
+        pi_null, tau_null, model)
     
-    return eta.estim
+    return zeta.posterior_log_odds, \
+        zeta.prior_log_odds, zeta.footprint_log_likelihood_ratio, \
+        zeta.total_log_likelihood_ratio

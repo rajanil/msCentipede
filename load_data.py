@@ -10,11 +10,20 @@ MIN_MAP_QUAL = 10
 MAX_VAL = 65535
 
 class ZipFile():
+    """File class to rapidly handle some file operations on 
+    a gzip file. To greatly increase speed, methods in this class 
+    use the system's `zcat` function to read each line of the 
+    file, rather than the `gzip` module.
+
+    Arguments
+        filename : string
+        name of the gzip file to parse.
+    """
 
     def __init__(self, filename):
 
         if os.path.isfile(filename):
-            pipe = subprocess.Popen(["zcat", filename], stdout = subprocess.PIPE)
+            pipe = subprocess.Popen(["zcat", filename], stdout=subprocess.PIPE)
             self.handle = pipe.stdout
             # remove header
             header = self.handle.next()
@@ -27,6 +36,14 @@ class ZipFile():
             yield line.strip().split('\t')
 
     def read(self, batch=None):
+        """Reads in the lines of the file, either in batches
+        or as a whole.
+
+        Optional arguments
+            batch : int
+            read in `batch` number of lines at a time.
+
+        """
 
         if batch is None:
             # read the whole file
@@ -41,16 +58,38 @@ class ZipFile():
 
         return locations
 
-    def close(self):    
+    def close(self): 
+      
         pass
 
 class BamFile():
+    """File class to handle some file operations on 
+    a bam file.
+
+    Arguments
+        filename : string
+        name of the bam file to parse.
+    """
 
     def __init__(self, filename):
 
     	self._handle = pysam.Samfile(filename, "rb")
 
     def get_read_counts(self, locations, width=200):
+        """Get the number of sequencing reads mapped to
+        each base along a window centered at each of
+        several motif instances.
+
+        Arguments:
+            locations : list
+            each entry of the list is a list that specifies 
+            information for a motif instance
+
+            width : int
+            length of the genomic window around the motif
+            instance.
+
+        """
 
         counts = []
         filtered_locations = []
@@ -67,6 +106,7 @@ class BamFile():
             left = center-width/2
             right = center+width/2
 
+            # fetch all reads overlapping this genomic location
             sam_iter = self._handle.fetch(reference=chrom, start=left, end=right)
             forward = np.zeros((width,), dtype=np.uint)
             reverse = np.zeros((width,), dtype=np.uint)
@@ -84,7 +124,7 @@ class BamFile():
                 start = read.pos
                 end = start + read.alen - 1
 
-                # skip read, if 5' end of plus-strand read or 3' end of minus-strand read is outside window
+                # skip read, if 5' end of read is outside window
                 if (read.is_reverse and end >= right) or (not read.is_reverse and start < left):
                     continue
 
@@ -93,13 +133,14 @@ class BamFile():
                 else:
                     forward[start-left] += 1
 
-            # flip fwd and rev strand reads, 
+            # flip fwd and rev strand read counts, 
             # if the motif is on the opposite strand.
             if strand=='+':
                 count = np.hstack((forward, reverse))
             else:
                 count = np.hstack((reverse[::-1], forward[::-1]))
 
+            # cap the read count at any location
             count[count>MAX_VAL] = MAX_VAL
             counts.append(count.astype(np.uint16))
 

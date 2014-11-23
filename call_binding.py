@@ -4,40 +4,23 @@ import load_data
 import mscentipede
 import argparse
 import time, pdb
-#import genome.db
 
-#gdb = genome.db.GenomeDB(path="/data/internal/genome_db",assembly='hg19')
-#chromosomes = gdb.get_chromosomes(get_sex=False)
-
-def infer(options):
+def learn_model(options):
 
     # load motif sites
     motif_handle = load_data.ZipFile(options.motif_file)
-    locations = [loc for loc in motif_handle.read() if float(loc[4])>13]
+    locations = motif_handle.read()
     motif_handle.close()
     scores = np.array([loc[4:] for loc in locations]).astype('float')
 
     # load read data
     bam_handles = [load_data.BamFile(bam_file) for bam_file in options.bam_files]
-    count_data = np.array([bam_handle.get_read_counts(locations) for bam_handle in bam_handles])
-    ig = [handle.close() for handle in bam_handles]
-
-    #fwd_track = gdb.open_track("encode_uw_dnase/Gm12878_Rep2_fwd")
-    #rev_track = gdb.open_track("encode_uw_dnase/Gm12878_Rep2_rev")
-    #fwd_dict = dict()
-    #rev_dict = dict()
-    #for chrom in chromosomes:
-    #    fwd_dict[chrom.name] = fwd_track.get_array(chrom)
-    #    rev_dict[chrom.name] = rev_track.get_array(chrom)
-
-    #count_data_check = np.array([np.hstack((fwd_dict[loc[0]][loc[1]-100:loc[1]+100], rev_dict[loc[0]][loc[1]-100:loc[1]+100])) if loc[3]=='+' \
-    #    else np.hstack((rev_dict[loc[0]][loc[2]-100:loc[2]+100][::-1], fwd_dict[loc[0]][loc[2]-100:loc[2]+100][::-1])) for loc in locations]) 
-    #fwd_track.close()
-    #rev_track.close()
-
-    #pdb.set_trace()   
+    count_data = np.array([bam_handle.get_read_counts(locations, width=max([200,options.window])) \
+        for bam_handle in bam_handles])
+    ig = [handle.close() for handle in bam_handles]   
 
     total_counts = np.sum(count_data, 2).T
+    # extract reads within specified window size
     if options.window<200:
         counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
             count[:,300-options.window/2:300+options.window/2])).T \
@@ -50,18 +33,12 @@ def infer(options):
         background_counts = np.ones((1,2*options.window,1), dtype=float)
     elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
         bam_handle = load_data.BamFile(options.bam_file_genomicdna)
-        bg_count_data = np.array([bam_handle.get_read_counts(locations)])
+        bg_count_data = np.array([bam_handle.get_read_counts(locations, width=options.window)])
         bam_handle.close()
-
-        if options.window<200:
-            background_counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
-                count[:,300-options.window/2:300+options.window/2])).T \
-                for count in bg_count_data]).T
-        else:
-            background_counts = np.array([count.T for count in bg_count_data]).T
+        background_counts = np.array([count.T for count in bg_count_data]).T
 
     # estimate model parameters
-    footprint_model, count_model, prior = mscentipede.infer(counts, total_counts, scores, \
+    footprint_model, count_model, prior = mscentipede.estimate_optimal_model(counts, total_counts, scores, \
         background_counts, options.model, options.restarts, options.mintol)
 
     # save model parameter estimates
@@ -72,7 +49,7 @@ def infer(options):
     model_handle.close()
 
 
-def decode(options):
+def infer_binding(options):
 
     # load the model
     handle = open(options.model_file, "r")
@@ -99,6 +76,7 @@ def decode(options):
     Ns = int(pipe.communicate()[0].strip())
     loops = Ns/options.batch+1
 
+    # open gzip file to save inference
     handle = load_data.gzip.open(options.posterior_file, "wb")
     header = ['Chr','Start','Stop','Strand','LogPosOdds','LogPriorOdds','MultLikeRatio','NegBinLikeRatio']
     handle.write('\t'.join(header)+'\n')
@@ -107,11 +85,13 @@ def decode(options):
         starttime = time.time()
         locations = motif_handle.read(batch=options.batch)
 
-        count_data = np.array([bam_handle.get_read_counts(locations) for bam_handle in bam_handles])
+        count_data = np.array([bam_handle.get_read_counts(locations, width=max([200,options.window])) \
+            for bam_handle in bam_handles])
         total_counts = np.sum(count_data, 2).T
 
         scores = np.array([loc[4:] for loc in locations]).astype('float')
 
+        # extract reads within specified window size
         if options.window<200:
             counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
                 count[:,300-options.window/2:300+options.window/2])).T \
@@ -121,14 +101,8 @@ def decode(options):
 
         # specify background
         if options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
-            bg_count_data = np.array([bg_handle.get_read_counts(locations)])
-
-            if options.window<200:
-                background_counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
-                    count[:,300-options.window/2:300+options.window/2])).T \
-                    for count in bg_count_data]).T
-            else:
-                background_counts = np.array([count.T for count in bg_count_data]).T
+            bg_count_data = np.array([bg_handle.get_read_counts(locations, width=options.window)])
+            background_counts = np.array([count.T for count in bg_count_data]).T
 
         logodds = mscentipede.decode(counts, total_counts, scores, background_counts, \
             footprint_model, count_model, prior, options.model)
@@ -149,12 +123,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="""runs msCentipede, to "
         "infer posterior of transcription factor binding, given a set of motif locations.""")
 
-    parser.add_argument("--infer",
+    parser.add_argument("--learn",
                         default=False,
                         action='store_true',
-                        help="call the subroutine to infer msCentipede model parameters")
+                        help="call the subroutine to learn msCentipede model parameters")
 
-    parser.add_argument("--decode",
+    parser.add_argument("--infer",
                         default=False,
                         action='store_true',
                         help="call the subroutine to compute binding posteriors, given "
@@ -163,7 +137,7 @@ def parse_args():
     parser.add_argument("--model", 
                         choices=("msCentipede", "msCentipede_flexbg", "msCentipede_flexbgmean"),
                         default="msCentipede",
-                        help="model for the background rate of chromatin accessibility")
+                        help="models differ in how they capture background rate of chromatin accessibility")
 
     parser.add_argument("--restarts", 
                         type=int, 
@@ -172,8 +146,8 @@ def parse_args():
 
     parser.add_argument("--mintol", 
                         type=float, 
-                        default=0.01,
-                        help="convergence criterion for change in marginal likelihood")
+                        default=1e-6,
+                        help="convergence criterion for change in per-site marginal likelihood")
 
     parser.add_argument("--model_file", 
                         type=str, 
@@ -188,7 +162,7 @@ def parse_args():
 
     parser.add_argument("--window", 
                         type=int, 
-                        default=64, 
+                        default=128, 
                         help="size of window around the motif, where chromatin "
                         "accessibility profile is used for inferring transcription "
                         "factor binding.")
@@ -203,7 +177,9 @@ def parse_args():
                         action="store",
                         help="name of a gzipped text file containing "
                         " positional information and other attributes for motifs "
-                        " of a transcription factor.")
+                        " of a transcription factor. Columns of the file should be as follows. "
+                        " Chromosome Start End Strand PWM_Score [Attribute_1 Attribute_2 ...] "
+                        " additional attributes are optional.")
 
     parser.add_argument("bam_files",
                         action="store",
@@ -213,10 +189,8 @@ def parse_args():
 
     parser.add_argument("--bam_file_genomicdna",
                         action="store",
-                        #nargs="+",
                         default=None,
-                        help="comma-separated list of bam files "
-                        " from a chromatin accessibility assay on genomic DNA")
+                        help="bam file from a chromatin accessibility assay on genomic DNA")
 
     options = parser.parse_args()
 
@@ -227,6 +201,11 @@ def parse_args():
     # if no model file is provided, create a `default` model file name
     if options.model_file is None:
         options.model_file = options.motif_file.split('.')[0]+"_model_file.pkl"
+        try:
+            handle = open(options.model_file, 'r')
+            handle.close()
+        except IOError:
+            parser.error("Need to provide the file where model parameters are saved")
 
     # if no posterior file is provided, create a `default` posterior file name
     if options.posterior_file is None:
