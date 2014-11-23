@@ -2,7 +2,7 @@ import numpy as np
 import cvxopt as cvx
 from cvxopt import solvers
 from scipy.special import digamma, gammaln, polygamma
-import time, math, pdb
+import time, math
 
 # suppress optimizer output
 solvers.options['show_progress'] = False

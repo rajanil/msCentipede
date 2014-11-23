@@ -11,15 +11,22 @@ def learn_model(options):
     motif_handle = load_data.ZipFile(options.motif_file)
     locations = motif_handle.read()
     motif_handle.close()
-    scores = np.array([loc[4:] for loc in locations]).astype('float')
+    if np.any([len(loc)<5 for loc in locations]):
+        print "Error: ensure all rows in motif instance file contain same number of columns"
+        sys.exit(1)
+    try:
+        scores = np.array([loc[4:] for loc in locations]).astype('float')
+    except ValueError:
+        print "Error: column 5 and higher should all be numeric values."
+        sys.exit(1)
 
     # load read data
     bam_handles = [load_data.BamFile(bam_file) for bam_file in options.bam_files]
     count_data = np.array([bam_handle.get_read_counts(locations, width=max([200,options.window])) \
         for bam_handle in bam_handles])
     ig = [handle.close() for handle in bam_handles]   
-
     total_counts = np.sum(count_data, 2).T
+
     # extract reads within specified window size
     if options.window<200:
         counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
