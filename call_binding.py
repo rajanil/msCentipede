@@ -147,34 +147,35 @@ def infer_binding(options):
 
 def parse_args():
 
-    parser = argparse.ArgumentParser(description="""runs msCentipede, to "
-        "infer posterior of transcription factor binding, given a set of motif locations.""")
+    parser = argparse.ArgumentParser(description="runs msCentipede, to "
+        "infer transcription factor binding, given a set of motif instances and "
+        "chromatin accessibility data")
 
     parser.add_argument("--task",
                         choices=("learn","infer"),
                         default="learn",
-                        help="specify whether msCentipede is used to learn model parameters "
-                        " or infer factor binding ")
+                        help="specify whether to learn model parameters "
+                        " or infer factor binding (default: learn)")
 
     parser.add_argument("--protocol",
                         choices=("ATAC_seq","DNase_seq"),
                         default="DNase_seq",
-                        help="specifies the chromatin accessibility protocold")
+                        help="specifies the chromatin accessibility protocol (default:DNase_seq)")
 
     parser.add_argument("--model", 
                         choices=("msCentipede", "msCentipede_flexbg", "msCentipede_flexbgmean"),
                         default="msCentipede",
-                        help="models differ in how they capture background rate of chromatin accessibility")
+                        help="models differ in how they capture background rate of enzyme cleavage (default:msCentipede)")
 
     parser.add_argument("--restarts", 
                         type=int, 
                         default=1, 
-                        help="number of re-runs of the algorithm")
+                        help="number of re-runs of the algorithm (default: 1)")
 
     parser.add_argument("--mintol", 
                         type=float, 
                         default=1e-6,
-                        help="convergence criterion for change in per-site marginal likelihood")
+                        help="convergence criterion for change in per-site marginal likelihood (default: 1e-6)")
 
     parser.add_argument("--model_file", 
                         type=str, 
@@ -190,34 +191,35 @@ def parse_args():
     parser.add_argument("--log_file",
                         type=str,
                         default=None,
-                        help="file name to store some statistics of the EM algorithm "
-                        "and a plot of the cleavage profile at bound sites")
+                        help="file name to store some statistics of the EM algorithm ")
+#                        "and a plot of the cleavage profile at bound sites")
 
     parser.add_argument("--window", 
                         type=int, 
                         default=128, 
-                        help="size of window around the motif, where chromatin "
+                        help="size of window around the motif instance, where chromatin "
                         "accessibility profile is used for inferring transcription "
-                        "factor binding.")
+                        "factor binding. (default: 128)")
 
     parser.add_argument("--batch", 
                         type=int, 
                         default=10000, 
-                        help="number of motifs to use for learning model parameters; "
-                        " also, number of motifs to decode at a time.")
+                        help="maximum number of motif instances used for learning model parameters. "
+                        " this is also the number of motif instances on which inference is "
+                        " performed at a time. (default: 10000)")
 
     parser.add_argument("motif_file",
                         action="store",
                         help="name of a gzipped text file containing "
-                        " positional information and other attributes for motifs "
-                        " of a transcription factor. Columns of the file should be as follows. "
-                        " Chromosome Start End Strand PWM_Score [Attribute_1 Attribute_2 ...] "
+                        " positional information and other attributes for motif instances "
+                        " of a transcription factor. columns of the file should be as follows. "
+                        " Chromosome Start End Strand PWM_Score [Attribute_1 Attribute_2 ...]. "
                         " additional attributes are optional.")
 
     parser.add_argument("bam_files",
                         action="store",
                         nargs="+",
-                        help="comma-separated list of bam files "
+                        help="whitespace separated list of bam files "
                         " from a chromatin accessibility assay ")
 
     parser.add_argument("--bam_file_genomicdna",
