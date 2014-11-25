@@ -64,15 +64,16 @@ options that need to be passed to the script, you can do the following:
     optional arguments:
       -h, --help            show this help message and exit
       --task {learn,infer}  specify whether msCentipede is used to learn model
-                            parameters or infer factor binding
+                            parameters or infer factor binding (default: learn)
       --protocol {ATAC_seq,DNase_seq}
-                            specifies the chromatin accessibility protocold
+                            specifies the chromatin accessibility protocol
+                            (default:DNase_seq)
       --model {msCentipede,msCentipede_flexbg,msCentipede_flexbgmean}
                             models differ in how they capture background rate of
-                            chromatin accessibility
-      --restarts RESTARTS   number of re-runs of the algorithm
+                            enzyme cleavage (default:msCentipede)
+      --restarts RESTARTS   number of re-runs of the algorithm (default: 1)
       --mintol MINTOL       convergence criterion for change in per-site marginal
-                            likelihood
+                            likelihood (default: 1e-6)
       --model_file MODEL_FILE
                             file name to store the model parameters
       --posterior_file POSTERIOR_FILE
@@ -83,9 +84,10 @@ options that need to be passed to the script, you can do the following:
                             and a plot of the cleavage profile at bound sites
       --window WINDOW       size of window around the motif, where chromatin
                             accessibility profile is used for inferring
-                            transcription factor binding.
+                            transcription factor binding. (default: 128)
       --batch BATCH         number of motifs to use for learning model parameters;
-                            also, number of motifs to decode at a time.
+                            also, number of motifs to decode at a time. (default:
+                            10000)
       --bam_file_genomicdna BAM_FILE_GENOMICDNA
                             bam file from a chromatin accessibility assay on
                             genomic DNA
