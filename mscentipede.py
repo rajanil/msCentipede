@@ -2,7 +2,7 @@ import numpy as np
 import cvxopt as cvx
 from cvxopt import solvers
 from scipy.special import digamma, gammaln, polygamma
-import time, math
+import time, math, pdb
 
 # suppress optimizer output
 solvers.options['show_progress'] = False
@@ -158,7 +158,7 @@ class Zeta():
         pi_null, tau_null, model):
 
         footprint_logodds = np.zeros((self.N,1),dtype=float)
-        lhoodA, lhoodB = likelihoodAB(data, pi, tau, pi_null, tau_null, model)
+        lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model)
 
         for j in xrange(data.J):
             footprint_logodds += insum(lhoodA.value[j] - lhoodB.value[j],[1])
@@ -179,7 +179,7 @@ class Zeta():
     def infer(self, data, scores, pi, tau, alpha, beta, omega, \
         pi_null, tau_null, model):
 
-        lhoodA, lhoodB = likelihoodAB(data, pi, tau, pi_null, tau_null, model)
+        lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model)
 
         for j in xrange(data.J):
             self.footprint_log_likelihood_ratio += insum(lhoodA.value[j] - lhoodB.value[j],[1])
@@ -309,6 +309,13 @@ class Pi(Data):
         # store optimum in data structure
         self.value = dict([(j,x_final[2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
 
+        self.avoid_edges()
+
+    def avoid_edges(self):
+
+        for j in xrange(self.J):
+            self.value[j][self.value[j]==0] = 1e-10
+            self.value[j][self.value[j]==1] = 1-1e-10
 
 class Tau():
     """
@@ -813,7 +820,7 @@ def likelihood(data, scores, zeta, pi, tau, \
 
     apriori = insum(beta.estim * scores,[1])
 
-    lhoodA, lhoodB = likelihoodAB(data, pi, tau, pi_null, tau_null, model)
+    lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model)
 
     footprint = np.zeros((data.N,1),dtype=float)
     for j in xrange(data.J):
@@ -897,30 +904,30 @@ def EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model
             alpha, beta, omega, pi_null, tau_null, model)
 
     # update multi-scale parameters
-    starttime = time.time()
+    #starttime = time.time()
     pi.update(data, zeta, tau)
-    print "p_jk update in %.3f secs"%(time.time()-starttime)
+    #print "p_jk update in %.3f secs"%(time.time()-starttime)
 
-    starttime = time.time()
+    #starttime = time.time()
     tau.update(data, zeta, pi)
-    print "tau update in %.3f secs"%(time.time()-starttime)
+    #print "tau update in %.3f secs"%(time.time()-starttime)
     
     # update negative binomial parameters
-    starttime = time.time()
+    #starttime = time.time()
     omega.update(zeta, alpha)
-    print "omega update in %.3f secs"%(time.time()-starttime)
+    #print "omega update in %.3f secs"%(time.time()-starttime)
 
-    starttime = time.time()
+    #starttime = time.time()
     alpha.update(zeta, omega)
-    print "alpha update in %.3f secs"%(time.time()-starttime)
+    #print "alpha update in %.3f secs"%(time.time()-starttime)
 
     # update prior parameters
-    starttime = time.time()
+    #starttime = time.time()
     beta.update(scores, zeta)
-    print "beta update in %.3f secs"%(time.time()-starttime)
+    #print "beta update in %.3f secs"%(time.time()-starttime)
 
 
-def square_EM(data, scores, eta, pi, tau, alpha, beta, omega, pi_null, tau_null, model):
+def square_EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model):
     """Accelerated update of model parameters and posterior probability of binding.
 
     Arguments
@@ -961,7 +968,7 @@ def square_EM(data, scores, eta, pi, tau, alpha, beta, omega, pi_null, tau_null,
 
     """
 
-    parameters = [B, tau, alpha, omega]
+    parameters = [pi, tau, alpha, omega]
     oldvar = []
     for parameter in parameters:
         try:
@@ -972,7 +979,7 @@ def square_EM(data, scores, eta, pi, tau, alpha, beta, omega, pi_null, tau_null,
 
     # take two update steps
     for step in [0,1]:
-        EM(data, scores, eta, B, tau, alpha, beta, omega, B_null, tau_null, model)
+        EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model)
         oldvar = []
         for parameter in parameters:
             try:
@@ -1011,7 +1018,7 @@ def square_EM(data, scores, eta, pi, tau, alpha, beta, omega, pi_null, tau_null,
         else:
             a_ok = True
 
-    EM(data, scores, eta, B, tau, alpha, beta, omega, B_null, tau_null, model)
+    EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model)
 
 
 def estimate_optimal_model(reads, totalreads, scores, background, model, restarts, mintol):
@@ -1087,9 +1094,13 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
     maxLoglike = -np.inf
     restart = 0
     err = 1
+    runlog = ['Number of sites = %d'%data.N]
     while restart<restarts:
 
         try:
+            totaltime = time.time()
+            print "Restart %d ..."%restart
+
             # initialize multi-scale model parameters
             pi = Pi(data.J)
             tau = Tau(data.J)
@@ -1106,6 +1117,7 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
             for j in xrange(pi.J):
                 pi.value[j] = np.sum(data.value[j][0] * zeta.estim[:,1:],0) \
                     / np.sum(data.total[j][0] * zeta.estim[:,1:],0).astype('float')
+            pi.avoid_edges()
 
             # initial log likelihood of the model
             Loglike = likelihood(data, scores, zeta, pi, tau, \
@@ -1125,13 +1137,17 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
 
                 tol = newLoglike - Loglike
                 Loglike = newLoglike
-                print iter+1, Loglike, tol, time.time()-itertime
+                print "Iteration %d: log likelihood = %.7f, change in log likelihood = %.7f, iteration time = %.3f secs"%(iter+1, Loglike, tol, time.time()-itertime)
+                iter += 1
+            totaltime = (time.time()-totaltime)/60.
 
             # test if mean cleavage rate at bound sites is greater than at 
             # unbound sites, for each replicate; avoids local optima issues.
             negbinmeans = alpha.estim * (1-omega.estim)/omega.estim
             if np.any(negbinmeans[:,0]<negbinmeans[:,1]):
                 restart += 1
+                log = "%d. Log likelihood (per site) = %.3f (Completed in %.3f minutes)"%(restart,Loglike,totaltime)
+                runlog.append(log)
                 # choose these parameter estimates, if the likelihood is greater.
                 if Loglike>maxLoglike:
                     maxLoglikeres = Loglike
@@ -1146,13 +1162,13 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
 
             print "encountered an invalid value"
             if err<5:
-                print "restarting learning ... %d"%err
+                print "re-initializing learning for Restart %d ... %d"%(restart,err)
                 err += 1
             else:
                 print "Error in learning model parameters. Please ensure the inputs are all valid"
                 sys.exit(1)
 
-    return footprint_model, count_model, prior
+    return footprint_model, count_model, prior, runlog
 
 
 def infer_binding_posterior(reads, totalreads, scores, background, footprint, negbinparams, prior, model):
@@ -1224,21 +1240,23 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
 
         tau_null = footprint[3]
 
-        zeta_null = Zeta(data_null, background.sum(1))
-        zeta_null.estim[:,1] = 1
-        zeta_null.estim[:,0] = 0
+        if data_null.N>1000:
 
-        # iterative update of background model, when
-        # accounting for overdispersion
-        change = np.inf
-        while change>1e-1:
-            change = tau_null.estim.copy()
-            
-            pi_null.update(data_null, zeta_null, tau_null)
+            zeta_null = Zeta(data_null, background.sum(1))
+            zeta_null.estim[:,1] = 1
+            zeta_null.estim[:,0] = 0
 
-            tau_null.update(data_null, zeta_null, pi_null)
+            # iterative update of background model, when
+            # accounting for overdispersion
+            change = np.inf
+            while change>1e-1:
+                change = tau_null.estim.copy()
+                
+                pi_null.update(data_null, zeta_null, tau_null)
 
-            change = np.abs(change-tau_null.estim).sum()
+                tau_null.update(data_null, zeta_null, pi_null)
+
+                change = np.abs(change-tau_null.estim).sum()
 
     zeta = Zeta(data, totalreads, infer=True)
 
@@ -1248,3 +1266,4 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
     return zeta.posterior_log_odds, \
         zeta.prior_log_odds, zeta.footprint_log_likelihood_ratio, \
         zeta.total_log_likelihood_ratio
+

@@ -69,11 +69,16 @@ class BamFile():
     Arguments
         filename : string
         name of the bam file to parse.
+
+        protocol : string
+        DNase_seq / ATAC_seq
+
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename, protocol):
 
     	self._handle = pysam.Samfile(filename, "rb")
+        self._protocol = protocol
 
     def get_read_counts(self, locations, width=200):
         """Get the number of sequencing reads mapped to
@@ -121,12 +126,23 @@ class BamFile():
                 if read.mapq < MIN_MAP_QUAL:
                     continue
 
-                start = read.pos
-                end = start + read.alen - 1
+                if self._protocol=='DNase_seq':
+                    start = read.pos
+                    end = start + read.alen - 1
 
-                # skip read, if 5' end of read is outside window
-                if (read.is_reverse and end >= right) or (not read.is_reverse and start < left):
-                    continue
+                    # skip read, if site of cleavage is outside window
+                    if (read.is_reverse and end >= right) or (not read.is_reverse and start < left):
+                        continue
+
+                elif self._protocol=='ATAC_seq':
+                    # site of adapter insertions are 9bp apart
+                    # an offset of +4 / -5 gives approximate site of transposition
+                    start = read.pos+4
+                    end = start + read.alen - 1 - 5
+
+                    # skip read, if site of transposition is outside window
+                    if start<left or start>=right or end<left or end>=right:
+                        continue
 
                 if read.is_reverse:
                     reverse[end-left] += 1
@@ -136,9 +152,14 @@ class BamFile():
             # flip fwd and rev strand read counts, 
             # if the motif is on the opposite strand.
             if strand=='+':
-                count = np.hstack((forward, reverse))
+                count = [forward, reverse]
             else:
-                count = np.hstack((reverse[::-1], forward[::-1]))
+                count = [reverse[::-1], forward[::-1]]
+
+            if self._protocol=='ATAC_seq':
+                count = count[0]+count[1]
+            else:
+                count = np.hstack(count)
 
             # cap the read count at any location
             count[count>MAX_VAL] = MAX_VAL

@@ -14,6 +14,8 @@ def learn_model(options):
     if np.any([len(loc)<5 for loc in locations]):
         print "Error: ensure all rows in motif instance file contain same number of columns"
         sys.exit(1)
+
+    locations = locations[:options.batch]
     try:
         scores = np.array([loc[4:] for loc in locations]).astype('float')
     except ValueError:
@@ -21,7 +23,7 @@ def learn_model(options):
         sys.exit(1)
 
     # load read data
-    bam_handles = [load_data.BamFile(bam_file) for bam_file in options.bam_files]
+    bam_handles = [load_data.BamFile(bam_file, options.protocol) for bam_file in options.bam_files]
     count_data = np.array([bam_handle.get_read_counts(locations, width=max([200,options.window])) \
         for bam_handle in bam_handles])
     ig = [handle.close() for handle in bam_handles]   
@@ -29,9 +31,13 @@ def learn_model(options):
 
     # extract reads within specified window size
     if options.window<200:
-        counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
-            count[:,300-options.window/2:300+options.window/2])).T \
-            for count in count_data]).T
+        if options.protocol=='DNase_seq':
+            counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
+                count[:,300-options.window/2:300+options.window/2])).T \
+                for count in count_data]).T
+        elif options.protocol=='ATAC_seq':
+            counts = np.array([count[:,100-options.window/2:100+options.window/2]
+                for count in count_data]).T
     else:
         counts = np.array([count.T for count in count_data]).T
 
@@ -39,14 +45,22 @@ def learn_model(options):
     if options.model=='msCentipede':
         background_counts = np.ones((1,2*options.window,1), dtype=float)
     elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
-        bam_handle = load_data.BamFile(options.bam_file_genomicdna)
+        bam_handle = load_data.BamFile(options.bam_file_genomicdna, options.protocol)
         bg_count_data = np.array([bam_handle.get_read_counts(locations, width=options.window)])
         bam_handle.close()
         background_counts = np.array([count.T for count in bg_count_data]).T
 
     # estimate model parameters
-    footprint_model, count_model, prior = mscentipede.estimate_optimal_model(counts, total_counts, scores, \
+    footprint_model, count_model, prior, runlog = mscentipede.estimate_optimal_model(counts, total_counts, scores, \
         background_counts, options.model, options.restarts, options.mintol)
+
+    # write log file
+    run_log.insert(0,'Motif file: %s'%options.motif_file)
+    run_log.insert(0,'Window size = %d'%options.window)
+    run_log.insert(0,'model = %s'%options.model)
+    log_handle = open(options.log_file, 'w')
+    log_handle.write('\n'.join(runlog)+'\n')
+    log_handle.close()
 
     # save model parameter estimates
     model_handle = open(options.model_file, 'w')
@@ -69,13 +83,13 @@ def infer_binding(options):
     motif_handle = load_data.ZipFile(options.motif_file)
     
     # open read data handles
-    bam_handles = [load_data.BamFile(bam_file) for bam_file in options.bam_files]
+    bam_handles = [load_data.BamFile(bam_file, options.protocol) for bam_file in options.bam_files]
 
     # open background data handles
     if options.model=='msCentipede':
         background_counts = np.ones((1,2*options.window,1), dtype=float)
     elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
-        bg_handle = load_data.BamFile(options.bam_file_genomicdna)
+        bg_handle = load_data.BamFile(options.bam_file_genomicdna, options.protocol)
 
     # check number of motif sites
     pipe = load_data.subprocess.Popen("zcat %s | wc -l"%options.motif_file, \
@@ -111,12 +125,18 @@ def infer_binding(options):
             bg_count_data = np.array([bg_handle.get_read_counts(locations, width=options.window)])
             background_counts = np.array([count.T for count in bg_count_data]).T
 
-        logodds = mscentipede.decode(counts, total_counts, scores, background_counts, \
+        posterior_log_odds, prior_log_odds, footprint_log_likelihood_ratio, \
+            total_log_likelihood_ratio = mscentipede.infer_binding_posterior(counts, \
+            total_counts, scores, background_counts, \
             footprint_model, count_model, prior, options.model)
+        output = np.hstack((posterior_log_odds, prior_log_odds, \
+            footprint_log_likelihood_ratio, total_log_likelihood_ratio))
 
-        ignore = [loc.extend(['%.4f'%p for p in pos[:4]])
-            for loc,pos in zip(locations,logodds)]
-        ignore = [handle.write('\t'.join(map(str,elem))+'\n') for elem in locations]
+        towrite = [loc[:4] for loc in locations]
+
+        ignore = [loc.extend(['%.4f'%p for p in pos])
+            for loc,pos in zip(towrite,output)]
+        ignore = [handle.write('\t'.join(map(str,elem))+'\n') for elem in towrite]
         print len(locations), time.time()-starttime
 
     handle.close()
@@ -136,11 +156,10 @@ def parse_args():
                         help="specify whether msCentipede is used to learn model parameters "
                         " or infer factor binding ")
 
-    parser.add_argument("--infer",
-                        default=False,
-                        action='store_true',
-                        help="call the subroutine to compute binding posteriors, given "
-                        "msCentipede model parameters")
+    parser.add_argument("--protocol",
+                        choices=("ATAC_seq","DNase_seq"),
+                        default="DNase_seq",
+                        help="specifies the chromatin accessibility protocold")
 
     parser.add_argument("--model", 
                         choices=("msCentipede", "msCentipede_flexbg", "msCentipede_flexbgmean"),
@@ -167,6 +186,12 @@ def parse_args():
                         default=None, 
                         help="file name to store the posterior odds ratio, and "
                         "likelihood ratios for each model component, at each motif. ")
+
+    parser.add_argument("--log_file",
+                        type=str,
+                        default=None,
+                        help="file name to store some statistics of the EM algorithm "
+                        "and a plot of the cleavage profile at bound sites")
 
     parser.add_argument("--window", 
                         type=int, 
@@ -200,6 +225,10 @@ def parse_args():
                         default=None,
                         help="bam file from a chromatin accessibility assay on genomic DNA")
 
+    parser.add_argument("--seed",
+                        default=None,
+                        help="set seed for random initialization of parameters")
+
     options = parser.parse_args()
 
     # if no motif file is provided, throw an error
@@ -208,11 +237,15 @@ def parse_args():
 
     # if no model file is provided, create a `default` model file name
     if options.model_file is None:
-        options.model_file = options.motif_file.split('.')[0]+"_model_parameters.pkl"
+        options.model_file = "%s_%s_model_parameters.pkl"%(options.motif_file.split('.')[0], '_'.join(options.model.split('-')))
 
     # if no posterior file is provided, create a `default` posterior file name
     if options.posterior_file is None:
-        options.posterior_file = options.motif_file.split('.')[0]+"_binding_posterior.txt.gz"
+        options.posterior_file = "%s_%s_binding_posterior.txt.gz"%(options.motif_file.split('.')[0], '_'.join(options.model.split('-')))
+
+    # if no log file is provided, create a `default` log file name
+    if options.log_file is None:
+        options.log_file = "%s_%s_log.txt"%(options.motif_file.split('.')[0],'_'.join(options.model.split('-')))
     
     # make sure model file exists, before trying to run inference
     if options.task=='infer':
@@ -226,6 +259,9 @@ def parse_args():
         parser.error("Need to provide a bam file containing chromatin accessibility "
             "data in genomic DNA, if the model is specified to be "
             "msCentipede-flexbgmean or msCentipede-flexbg")
+
+    if options.seed is not None:
+        np.random.seed(int(options.seed))
 
     return options
 
