@@ -99,7 +99,11 @@ The software is designed to run in two separate steps. In the first step, optima
 
 ### Key Inputs
 
-The key inputs that need to be passed to this script are a path to the file containing the list of motif instances and the bam files (sorted and indexed) containing sequencing reads from a chromatin accessibility assay (DNase-seq or ATAC-seq). Note that these inputs are positional arguments and the files must be specified in the correct order (as shown above). When multiple library / sample replicates are available, the bam files for the replicates can be provided as separate files, separated by whitespace. Bam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. However, bam files from different protocols or drastically different read lengths are best not mixed since protocol or read length differences could mask biologically meaningful heterogeneity that is relevant in identifying transcription factor binding sites.
+The key inputs that need to be passed to this script are 
++   a path to the file containing the list of motif instances
++   the bam files (sorted and indexed) containing sequencing reads from a chromatin accessibility assay (DNase-seq or ATAC-seq). 
+
+Note that these inputs are positional arguments and the files must be specified in the correct order (as shown above). When multiple library / sample replicates are available, the bam files for the replicates can be provided as separate files, separated by whitespace. Bam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. However, bam files from different protocols or drastically different read lengths are best not mixed since protocol or read length differences could mask biologically meaningful heterogeneity that is relevant in identifying transcription factor binding sites.
 
 ### Learning model parameters
 
