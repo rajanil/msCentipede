@@ -2,15 +2,15 @@
 
 *msCentipede* is an algorithm for accurately inferring transcription factor binding sites using chromatin
 accessibility data (Dnase-seq, ATAC-seq) and is written in Python2.x. 
-The hierarchical multiscale model underlying msCentipede uses patterns of DNA cleavage
-by nucleases in open chromatin regions (regions typically bound by transcription factors). msCentipede, 
-a generalization of the [CENTIPEDE](http://centipede.uchicago.edu) model, accounts for heterogeneity in the DNA cleavage patterns 
-around sites bound by transcription factors.
-This repo contains set of scripts to load the data and run the algorithm.
+The hierarchical multiscale model underlying msCentipede identifies factor-bound genomic sites
+by using patterns in DNA cleavage resulting from the action of nucleases in open chromatin regions 
+(regions typically bound by transcription factors). msCentipede, 
+a generalization of the [CENTIPEDE](http://centipede.uchicago.edu) model, accounts for 
+heterogeneity in the DNA cleavage patterns around sites bound by transcription factors.
 
-This document summarizes how to setup this software package
-and run the algorithm on a test dataset of motif instances
-and some publicly available DNase-seq data.
+This repo contains set of scripts to load the data and run the algorithm. This document summarizes 
+how to download and setup this software package and provides instructions on how to run the software
+on a test dataset of motif instances and some publicly available DNase-seq data.
 
 ## Dependencies
 
@@ -43,24 +43,24 @@ To retrieve the latest code updates, you can do the following:
 
 ## Executing the code
 
-The main script you will need to execute is `call_binding.py`. To see command-line 
+The script you will need to execute is `call_binding.py`. To see command-line 
 options that need to be passed to the script, you can do the following:
 
     $ python call_binding.py
 
-    Here is how you can use this script
-
-    Usage: python call_binding.py   [-h] 
-                                    [--task {learn,infer} (default: learn)]
-                                    [--model {msCentipede,msCentipede_flexbg,msCentipede_flexbgmean} (default: msCentipede)]
-                                    [--restarts RESTARTS (default: 1)] 
-                                    [--mintol MINTOL (default: 1e-6)]
-                                    [--model_file MODEL_FILE (default: None)]
-                                    [--posterior_file POSTERIOR_FILE (default: None)]
-                                    [--window WINDOW (default: 128)]
-                                    [--batch BATCH (default: 10000)]
-                                    [--bam_file_genomicdna BAM_FILE_GENOMICDNA (default: None)]
-                                    motif_file bam_files [bam_files ...]
+    usage: call_binding.py  [-h] [--task {learn,infer}]
+                            [--protocol {ATAC_seq,DNase_seq}]
+                            [--model {msCentipede,msCentipede_flexbg,msCentipede_flexbgmean}]
+                            [--restarts RESTARTS] 
+                            [--mintol MINTOL]
+                            [--model_file MODEL_FILE]
+                            [--posterior_file POSTERIOR_FILE] 
+                            [--log_file LOG_FILE]
+                            [--window WINDOW]
+                            [--batch BATCH]
+                            [--bam_file_genomicdna BAM_FILE_GENOMICDNA]
+                            [--seed SEED]
+                            motif_file bam_files [bam_files ...]
 
 The key inputs that need to be passed to this script are a path to the file containing the list of motif instances and the bam files (sorted and indexed) containing sequencing reads from a chromatin accessibility assay (DNase-seq or ATAC-seq). Note that the files must be specified in the correct order (as shown above). When multiple library replicates are available, the bam files for the replicates should be provided as separate files, separated by whitespace. Bam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. If the model flag is specified to be `msCentipede-flexbgmean` or `msCentipede-flexbg`, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed to the flag `bam_file_genomicdna`.
 
