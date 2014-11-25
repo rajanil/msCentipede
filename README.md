@@ -95,39 +95,31 @@ options that need to be passed to the script, you can do the following:
 
 We will now describe in detail how to use this software using an example dataset of CTCF motif instances on chromosome 10 in hg19 coordinates is provided in `test/CTCF_chr10_motifs.txt.gz`. DNase-seq data for the GM12878 cell line (bam and bai files) can be downloaded from ENCODE to `test/` (in the following instructions, we assume the data files are named [Gm12878_Rep1.bam]() and [Gm12878_Rep2.bam]())
 
-The key inputs that need to be passed to this script are a path to the file containing the list of motif instances and the bam files (sorted and indexed) containing sequencing reads from a chromatin accessibility assay (DNase-seq or ATAC-seq). Note that the files must be specified in the correct order (as shown above). When multiple library / sample replicates are available, the bam files for the replicates can be provided as separate files, separated by whitespace. 
+The software is designed to run in two separate steps. In the first step, optimal values for the model parameters are estimated and, in the second step, posterior probability of factor binding is inferred. Since accurate estimates of model parameters can be obtained using 5000-10000 motif instances, this enables efficient inference for those transcription factors that have orders of magnitude more motif instances genomewide. If more motif instances are available in the file than the value of the flag `--batch`, then `batch` number of motif instances that have the highest PWM score are used in learning model parameters.
 
-    python call_binding.py test/CTCF_chr10_motifs.txt.gz test/Gm12878_Rep1.bam test/Gm12878_Rep2.bam
+### Key Inputs
 
-This executes the software to learn the model parametersBam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. However, bam files from different protocols or drastically different read lengths are best not mixed since these differences could mask biologically meaningful heterogeneity that is relevant in identifying transcription factor binding sites.
+The key inputs that need to be passed to this script are a path to the file containing the list of motif instances and the bam files (sorted and indexed) containing sequencing reads from a chromatin accessibility assay (DNase-seq or ATAC-seq). Note that these inputs are positional arguments and the files must be specified in the correct order (as shown above). When multiple library / sample replicates are available, the bam files for the replicates can be provided as separate files, separated by whitespace. Bam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. However, bam files from different protocols or drastically different read lengths are best not mixed since protocol or read length differences could mask biologically meaningful heterogeneity that is relevant in identifying transcription factor binding sites.
 
 ### Learning model parameters
 
-To learn the model parameters, the value of `task` should be set to `learn` and a custom file name can be provided where optimal model parameters will be stored. For example, given a set of CTCF motif instances in `test/CTCF_motifs.txt.gz` and bam files containing 3 replicate DNase-seq data sets in LCLs, we can learn the model parameters using the command
+The model parameters can be learned by passing the following flags.
 
-    python call_binding.py --task learn test/CTCF test/LCL_dnase_seq_Rep1.bam test/LCL_dnase_seq_Rep2.bam test/LCL_dnase_seq_Rep3.bam
+    python call_binding.py --task learn test/CTCF_chr10_motifs.txt.gz test/Gm12878_Rep1.bam test/Gm12878_Rep2.bam
 
-This will run msCentipede with all other default values and output a file `test/CTCF_model_parameters.pkl`. Alternatively, you can specify the file name to which the model parameters will be stored, using the flag `model_file`.
+This will run msCentipede with all other default values and output a log file `test/CTCF_chr10_motifs_msCentipede_log.txt` and a file `test/CTCF_chr10_motifs_msCentipede_model_parameters.pkl` in which the model parameter objects are stored. This is a standard pickle file that can be viewed using the `cPickle` module.
 
 ### Inferring factor binding
 
-To compute the posterior binding odds for a set of motif instances, the value of `task` should be set to `infer` and a file path containing the model parameters should be provided (in addition to other key inputs). For example,
+The posterior log odds of binding for a set of motif instances can be computed by passing the following flags.
 
-    python call_binding.py --task infer --model_file test/CTCF_model_parameters.pkl test/CTCF test/LCL_dnase_seq_Rep1.bam test/LCL_dnase_seq_Rep2.bam test/LCL_dnase_seq_Rep3.bam
+    python call_binding.py --task infer test/CTCF_chr10_motifs.txt.gz test/Gm12878_Rep1.bam test/Gm12878_Rep2.bam
 
-This will run msCentipede with all other default values and output a file `test/CTCF_binding_posterior.txt.gz`. Alternatively, you can specify the file name to which the binding posterior odds and other metrics will be written.
+This will run msCentipede with all other default values and output a file `test/CTCF_chr10_motifs_msCentipede_binding_posterior.txt.gz`.
 
-If the model flag is specified to be `msCentipede-flexbgmean` or `msCentipede-flexbg`, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed to the flag `bam_file_genomicdna`.
+### Optional parameters
 
-## Running on test data
+Instead of the default file names, you can specify the file name to which the run log, model parameters and binding posterior odds will be written, using the flags `--log_file`, `--model_file` and `--posterior_file`, respectively.
 
-A test dataset of CTCF motif instances in hg19 coordinates is provided in `test/CTCF_motifs.txt.gz`. 
-DNase-seq data for the GM12878 cell line, downloaded from ENCODE, are provided in 
-`test/Gm12878_Rep1.sort.bam` and `test/Gm12878_Rep2.sort.bam`. The output files in 
-`test/` were generated by executing the `msCentipede` model as follows:
+If the model flag is specified to be `msCentipede-flexbgmean` or `msCentipede-flexbg`, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed, using the flag `--bam_file_genomicdna`.
 
-    $ python call_binding.py --task learn --model_file test/Ctcf_model_parameters.pkl test/Ctcf_motifs.txt.gz test/Gm12878_Rep1.sort.bam test/Gm12878_Rep2.sort.bam --seed=100
-    $ ls test/Ctcf*
-
-    $ python call_binding.py --task infer --model_file test/Ctcf_model_parameters.pkl test/Ctcf_motifs.txt.gz test/Gm12878_Rep1.sort.bam test/Gm12878_Rep2.sort.bam --seed=100
-    $ ls test/Ctcf*
