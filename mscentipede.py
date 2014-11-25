@@ -1099,7 +1099,7 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
 
         try:
             totaltime = time.time()
-            print "Restart %d ..."%restart
+            print "Restart %d ..."%(restart+1)
 
             # initialize multi-scale model parameters
             pi = Pi(data.J)

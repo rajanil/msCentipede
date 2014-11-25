@@ -55,9 +55,9 @@ def learn_model(options):
         background_counts, options.model, options.restarts, options.mintol)
 
     # write log file
-    run_log.insert(0,'Motif file: %s'%options.motif_file)
-    run_log.insert(0,'Window size = %d'%options.window)
-    run_log.insert(0,'model = %s'%options.model)
+    runlog.insert(0,'Motif file: %s'%options.motif_file)
+    runlog.insert(0,'Window size = %d'%options.window)
+    runlog.insert(0,'model = %s'%options.model)
     log_handle = open(options.log_file, 'w')
     log_handle.write('\n'.join(runlog)+'\n')
     log_handle.close()
