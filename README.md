@@ -2,7 +2,7 @@
 
 **msCentipede** is an algorithm for accurately inferring transcription factor binding sites using chromatin
 accessibility data (Dnase-seq, ATAC-seq) and is written in Python2.x. 
-The hierarchical multiscale model underlying msCentipede identifies factor-bound genomic sites
+The [hierarchical multiscale model underlying msCentipede]() identifies factor-bound genomic sites
 by using patterns in DNA cleavage resulting from the action of nucleases in open chromatin regions 
 (regions typically bound by transcription factors). msCentipede, 
 a generalization of the [CENTIPEDE](http://centipede.uchicago.edu) model, accounts for 
@@ -53,18 +53,18 @@ options that need to be passed to the script, you can do the following:
 
     positional arguments:
       motif_file            name of a gzipped text file containing positional
-                            information and other attributes for motifs of a
-                            transcription factor. Columns of the file should be as
-                            follows. Chromosome Start End Strand PWM_Score
-                            [Attribute_1 Attribute_2 ...] additional attributes
+                            information and other attributes for motif instances
+                            of a transcription factor. columns of the file should
+                            be as follows. Chromosome Start End Strand PWM_Score
+                            [Attribute_1 Attribute_2 ...]. additional attributes
                             are optional.
-      bam_files             comma-separated list of bam files from a chromatin
-                            accessibility assay
+      bam_files             whitespace separated list of bam files from a
+                            chromatin accessibility assay
 
     optional arguments:
       -h, --help            show this help message and exit
-      --task {learn,infer}  specify whether msCentipede is used to learn model
-                            parameters or infer factor binding (default: learn)
+      --task {learn,infer}  specify whether to learn model parameters or infer
+                            factor binding (default: learn)
       --protocol {ATAC_seq,DNase_seq}
                             specifies the chromatin accessibility protocol
                             (default:DNase_seq)
@@ -81,13 +81,13 @@ options that need to be passed to the script, you can do the following:
                             likelihood ratios for each model component, at each
                             motif.
       --log_file LOG_FILE   file name to store some statistics of the EM algorithm
-                            and a plot of the cleavage profile at bound sites
-      --window WINDOW       size of window around the motif, where chromatin
-                            accessibility profile is used for inferring
+      --window WINDOW       size of window around the motif instance, where
+                            chromatin accessibility profile is used for inferring
                             transcription factor binding. (default: 128)
-      --batch BATCH         number of motifs to use for learning model parameters;
-                            also, number of motifs to decode at a time. (default:
-                            10000)
+      --batch BATCH         maximum number of motif instances used for learning
+                            model parameters. this is also the number of motif
+                            instances on which inference is performed at a time.
+                            (default: 10000)
       --bam_file_genomicdna BAM_FILE_GENOMICDNA
                             bam file from a chromatin accessibility assay on
                             genomic DNA
@@ -127,5 +127,5 @@ This will run msCentipede with all other default values and output a file `test/
 
 Instead of the default file names, you can specify the file name to which the run log, model parameters and binding posterior odds will be written, using the flags `--log_file`, `--model_file` and `--posterior_file`, respectively.
 
-If the model flag is specified to be `msCentipede-flexbgmean` or `msCentipede-flexbg`, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed, using the flag `--bam_file_genomicdna`.
+The differences between the three models *msCentipede* , *msCentipede_flexbgmean* , and *msCentipede_flexbg* are specified in detail in the associated [publication](). If the model flag is specified to be *msCentipede_flexbgmean* or *msCentipede_flexbg*, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed, using the flag `--bam_file_genomicdna`.
 
