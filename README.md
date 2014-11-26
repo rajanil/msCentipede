@@ -105,6 +105,15 @@ The key inputs that need to be passed to this script are
 
     *Note: these inputs are positional arguments and the files must be specified in the correct order (as shown above).* 
 
+The gzipped file of motif instances should have the following format.
+
+  Chr   Start     Stop      Strand  PwmScore
+  chr10 3944439   3944456   +       15.21570492
+  chr10 15627426  15627443  -       20.39377594
+  .     .         .         .       .
+
+In the above format, positions are 0-based. `Start' corresponds to the first base of the core motif for `+' strand motif instances and the last base of the core motif for `-' strand motif instances.
+
 When multiple library / sample replicates are available, the bam files for the replicates can be provided as separate files, separated by whitespace. Bam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. However, bam files from different protocols or drastically different read lengths are best not mixed since protocol or read length differences could mask biologically meaningful heterogeneity that is relevant in identifying transcription factor binding sites.
 
 ### Learning model parameters
