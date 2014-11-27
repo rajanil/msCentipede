@@ -24,22 +24,13 @@ def learn_model(options):
 
     # load read data
     bam_handles = [load_data.BamFile(bam_file, options.protocol) for bam_file in options.bam_files]
-    count_data = np.array([bam_handle.get_read_counts(locations, width=max([200,options.window])) \
+    count_data = np.array([bam_handle.get_read_counts(locations, width=options.window)) \
         for bam_handle in bam_handles])
     ig = [handle.close() for handle in bam_handles]   
     total_counts = np.sum(count_data, 2).T
 
     # extract reads within specified window size
-    if options.window<200:
-        if options.protocol=='DNase_seq':
-            counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
-                count[:,300-options.window/2:300+options.window/2])).T \
-                for count in count_data]).T
-        elif options.protocol=='ATAC_seq':
-            counts = np.array([count[:,100-options.window/2:100+options.window/2]
-                for count in count_data]).T
-    else:
-        counts = np.array([count.T for count in count_data]).T
+    counts = np.array([count.T for count in count_data]).T
 
     # specify background
     if options.model=='msCentipede':
@@ -109,16 +100,9 @@ def infer_binding(options):
         count_data = np.array([bam_handle.get_read_counts(locations, width=max([200,options.window])) \
             for bam_handle in bam_handles])
         total_counts = np.sum(count_data, 2).T
+        counts = np.array([count.T for count in count_data]).T
 
         scores = np.array([loc[4:] for loc in locations]).astype('float')
-
-        # extract reads within specified window size
-        if options.window<200:
-            counts = np.array([np.hstack((count[:,100-options.window/2:100+options.window/2], \
-                count[:,300-options.window/2:300+options.window/2])).T \
-                for count in count_data]).T
-        else:
-            counts = np.array([count.T for count in count_data]).T
 
         # specify background
         if options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
@@ -264,6 +248,14 @@ def parse_args():
 
     if options.seed is not None:
         np.random.seed(int(options.seed))
+
+    if options.window<=0:
+        options.window = 128
+
+    if not ((options.window & (options.window - 1)) == 0):
+        options.window = 2**(int(np.log2(options.window)))
+        pdb.set_trace()
+
 
     return options
 
