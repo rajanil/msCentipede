@@ -1,7 +1,5 @@
 model = msCentipede
-Window size = 64
+Window size = 128
 Motif file: test/Ctcf_chr10_motifs.txt.gz
 Number of sites = 471
-1. Log likelihood (per site) = 26.793 (Completed in 100.429 minutes)
-2. Log likelihood (per site) = 26.793 (Completed in 36.750 minutes)
-3. Log likelihood (per site) = 26.793 (Completed in 121.298 minutes)
+1. Log likelihood (per site) = -69.680 (Completed in 219.530 minutes)

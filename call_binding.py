@@ -24,7 +24,7 @@ def learn_model(options):
 
     # load read data
     bam_handles = [load_data.BamFile(bam_file, options.protocol) for bam_file in options.bam_files]
-    count_data = np.array([bam_handle.get_read_counts(locations, width=options.window)) \
+    count_data = np.array([bam_handle.get_read_counts(locations, width=options.window) \
         for bam_handle in bam_handles])
     ig = [handle.close() for handle in bam_handles]   
     total_counts = np.sum(count_data, 2).T
@@ -70,6 +70,11 @@ def infer_binding(options):
     prior = cPickle.load(handle)
     handle.close()
 
+    # check if specified window size matches window size in model parameters
+    if 2**footprint_model[0].J!=options.window*2:
+        print "Window size in model (%d bp) different from specified window size (%d bp). Using size in model ...\n"%(2**footprint_model[0].J/2, options.window)
+        options.window = 2**footprint_model[0].J/2
+
     # load motifs
     motif_handle = load_data.ZipFile(options.motif_file)
     
@@ -97,7 +102,7 @@ def infer_binding(options):
         starttime = time.time()
         locations = motif_handle.read(batch=options.batch)
 
-        count_data = np.array([bam_handle.get_read_counts(locations, width=max([200,options.window])) \
+        count_data = np.array([bam_handle.get_read_counts(locations, width=options.window) \
             for bam_handle in bam_handles])
         total_counts = np.sum(count_data, 2).T
         counts = np.array([count.T for count in count_data]).T
@@ -254,8 +259,6 @@ def parse_args():
 
     if not ((options.window & (options.window - 1)) == 0):
         options.window = 2**(int(np.log2(options.window)))
-        pdb.set_trace()
-
 
     return options
 
