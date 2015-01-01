@@ -1,0 +1,67 @@
+#+title: "scripts used in Raj et al 2015 to run PIQ"
+
+#+latex_header: \usepackage{parskip}
+#+latex_header: \setlength{\parindent}{0pt}
+#+latex_header: \usepackage{underscore}
+#+latex_header: \textwidth 16cm
+#+latex_header: \oddsidemargin 0.5cm
+#+latex_header: \evensidemargin 0.5cm
+
+To run [[https://bitbucket.org/thashim/piq-single/][PIQ]], we followed instructions from the authors of PIQ (see [[https://bitbucket.org/thashim/piq-single/issue/5/running-piq-on-pre-selected-motif-sites][here]], [[https://bitbucket.org/thashim/piq-single/issue/6/running-piq-with-two-library-replicates][here]], and [[https://bitbucket.org/thashim/piq-single/issue/7/interpreting-piq-output][here]]). We have bam file for each replicate in
+#+begin_src bash
+~anilraj/histmod/cache/PIQdata/
+#+end_src  
+and selected motifs sites for each TF as bed file in 
+#+begin_src bash
+~anilraj/histmod/cache/PIQ/<tfid>_Gm12878_sites.bed
+#+end_src  
+
+
+First, we created directories:
+#+begin_src bash
+cd /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/
+mkdir motifsites
+mkdir readfiles
+mkdir tmp
+mkdir res_pooled
+mkdir res_Rep1
+mkdir res_Rep2
+#+end_src  
+
+
+We prepare R binary file from bam file, for each replicate:
+#+begin_src R
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep1.RData ~anilraj/histmod/cache/PIQdata/Gm12878_Rep1.sort.bam
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep2.RData ~anilraj/histmod/cache/PIQdata/Gm12878_Rep2.sort.bam
+#+end_src  
+and after pooling two replicates:
+#+begin_src R
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/pooled.RData ~anilraj/histmod/cache/PIQdata/Gm12878_pooled.sort.bam
+#+end_src  
+and to run two replicates
+#+begin_src R
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile
+/analysis/piq/readfiles/multi.RData ~anilraj/histmod/cache/PIQdata/Gm12878_Rep1.sort.bam ~anilraj/histmod/cache/PIQdata/Gm12878_Rep2.sort.bam
+#+end_src  
+
+
+We prepare motif sites input file for each TF (`${tfid}' indicates TF name): 
+#+begin_src R
+/data/tools/R-3.1.1/bin/Rscript bed2pwm.r common.r ~anilraj/histmod/cache/PIQ/S${tfid}_Gm12878_sites.bed S ${tfid} /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/
+#+end_src  
+and run PIQ for each TF, for each replicate: 
+#+begin_src R
+/data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_Rep1/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep1.RData ${tfid}
+
+/data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_Rep2/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep2.RData ${tfid}
+#+end_src  
+and after pooling two replicates:
+#+begin_src R
+/data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_pooled/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/pooled.RData ${tfid}
+#+end_src  
+and run two replicates
+#+begin_src R
+/data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_multi/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/multi.RData ${tfid}
+#+end_src  
+
+

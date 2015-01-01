@@ -1,0 +1,109 @@
+% Created 2015-01-01 Thu 08:53
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{fixltx2e}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{float}
+\usepackage{wrapfig}
+\usepackage{rotating}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{textcomp}
+\usepackage{marvosym}
+\usepackage{wasysym}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\tolerance=1000
+\usepackage{listings}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{underscore}
+\usepackage{parskip}
+\usepackage{lmodern}
+\usepackage{parskip}
+\setlength{\parindent}{0pt}
+\usepackage{underscore}
+\textwidth 16cm
+\oddsidemargin 0.5cm
+\evensidemargin 0.5cm
+\author{Heejung Shim}
+\date{\today}
+\title{"scripts used in Raj et al 2015 to run PIQ"}
+\hypersetup{
+  pdfkeywords={},
+  pdfsubject={},
+  pdfcreator={Emacs 24.3.1 (Org mode 8.2.10)}}
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+To run \href{https://bitbucket.org/thashim/piq-single/}{PIQ}, we followed instructions from the authors of PIQ (see \href{https://bitbucket.org/thashim/piq-single/issue/5/running-piq-on-pre-selected-motif-sites}{here}, \href{https://bitbucket.org/thashim/piq-single/issue/6/running-piq-with-two-library-replicates}{here}, and \href{https://bitbucket.org/thashim/piq-single/issue/7/interpreting-piq-output}{here}). We have bam file for each replicate in
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=bash,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+~anilraj/histmod/cache/PIQdata/
+\end{lstlisting}
+and selected motifs sites for each TF as bed file in 
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=bash,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+~anilraj/histmod/cache/PIQ/<tfid>_Gm12878_sites.bed
+\end{lstlisting}
+
+
+First, we created directories:
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=bash,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+cd /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/
+mkdir motifsites
+mkdir readfiles
+mkdir tmp
+mkdir res_pooled
+mkdir res_Rep1
+mkdir res_Rep2
+\end{lstlisting}
+
+
+We prepare R binary file from bam file, for each replicate:
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=R,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep1.RData ~anilraj/histmod/cache/PIQdata/Gm12878_Rep1.sort.bam
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep2.RData ~anilraj/histmod/cache/PIQdata/Gm12878_Rep2.sort.bam
+\end{lstlisting}
+and after pooling two replicates:
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=R,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/pooled.RData ~anilraj/histmod/cache/PIQdata/Gm12878_pooled.sort.bam
+\end{lstlisting}
+and to run two replicates
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=R,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile
+/analysis/piq/readfiles/multi.RData ~anilraj/histmod/cache/PIQdata/Gm12878_Rep1.sort.bam ~anilraj/histmod/cache/PIQdata/Gm12878_Rep2.sort.bam
+\end{lstlisting}
+
+
+We prepare motif sites input file for each TF (`\$\{tfid\}' indicates TF name): 
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=R,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+/data/tools/R-3.1.1/bin/Rscript bed2pwm.r common.r ~anilraj/histmod/cache/PIQ/S${tfid}_Gm12878_sites.bed S ${tfid} /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/
+\end{lstlisting}
+and run PIQ for each TF, for each replicate: 
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=R,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+/data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_Rep1/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep1.RData ${tfid}
+
+/data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_Rep2/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep2.RData ${tfid}
+\end{lstlisting}
+and after pooling two replicates:
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=R,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+/data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_pooled/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/pooled.RData ${tfid}
+\end{lstlisting}
+and run two replicates
+\lstset{breaklines=true,showspaces=false,showtabs=false,tabsize=2,basicstyle=\ttfamily,frame=single,keywordstyle=\color{Blue},stringstyle=\color{BrickRed},commentstyle=\color{ForestGreen},columns=fullflexible,language=R,label= ,caption= ,numbers=none}
+\begin{lstlisting}
+/data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_multi/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/multi.RData ${tfid}
+\end{lstlisting}
+% Emacs 24.3.1 (Org mode 8.2.10)
+\end{document}
