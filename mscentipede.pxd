@@ -77,3 +77,10 @@ cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 	Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
 	Omega omega, Pi pi_null, Tau tau_null, str model)
 
+cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
+    Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
+    Omega omega, Pi pi_null, Tau tau_null, str model)
+
+cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
+    Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
+    Omega omega, Pi pi_null, Tau tau_null, str model)

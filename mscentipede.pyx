@@ -956,7 +956,9 @@ cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     return L
 
 
-def EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model):
+cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
+    Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
+    Omega omega, Pi pi_null, Tau tau_null, str model):
     """This subroutine updates all model parameters once and computes an
     estimate of the posterior probability of binding.
 
@@ -998,36 +1000,39 @@ def EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model
 
     """
 
+    cdef double starttime
 
     # update binding posteriors
     zeta.update(data, scores, pi, tau, \
             alpha, beta, omega, pi_null, tau_null, model)
 
     # update multi-scale parameters
-    #starttime = time.time()
+    starttime = time.time()
     pi.update(data, zeta, tau)
-    #print "p_jk update in %.3f secs"%(time.time()-starttime)
+    print "p_jk update in %.3f secs"%(time.time()-starttime)
 
-    #starttime = time.time()
+    starttime = time.time()
     tau.update(data, zeta, pi)
-    #print "tau update in %.3f secs"%(time.time()-starttime)
+    print "tau update in %.3f secs"%(time.time()-starttime)
     
     # update negative binomial parameters
-    #starttime = time.time()
+    starttime = time.time()
     omega.update(zeta, alpha)
-    #print "omega update in %.3f secs"%(time.time()-starttime)
+    print "omega update in %.3f secs"%(time.time()-starttime)
 
-    #starttime = time.time()
+    starttime = time.time()
     alpha.update(zeta, omega)
-    #print "alpha update in %.3f secs"%(time.time()-starttime)
+    print "alpha update in %.3f secs"%(time.time()-starttime)
 
     # update prior parameters
-    #starttime = time.time()
+    starttime = time.time()
     beta.update(scores, zeta)
-    #print "beta update in %.3f secs"%(time.time()-starttime)
+    print "beta update in %.3f secs"%(time.time()-starttime)
 
 
-def square_EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model):
+cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
+    Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
+    Omega omega, Pi pi_null, Tau tau_null, str model):
     """Accelerated update of model parameters and posterior probability of binding.
 
     Arguments
@@ -1068,6 +1073,11 @@ def square_EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null
 
     """
 
+    cdef long j, step
+    cdef double a
+    cdef np.ndarray r, v, varA, varB, varC, invalid, newparam
+    cdef list parameters, oldvar, oldvars, R, V
+
     parameters = [pi, tau, alpha, omega]
     oldvar = []
     for parameter in parameters:
@@ -1096,7 +1106,7 @@ def square_EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null
         a = -1.
 
     # given two update steps, compute an optimal step that achieves
-    # a better likelihood than the best of the two steps.
+    # a better likelihood than the two steps.
     a_ok = False
     while not a_ok:
         invalid = np.zeros((0,), dtype='bool')
@@ -1121,7 +1131,11 @@ def square_EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null
     EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model)
 
 
-def estimate_optimal_model(reads, totalreads, scores, background, model, restarts, mintol):
+def estimate_optimal_model(np.ndarray[np.float64_t, ndim=2] reads, \
+    np.ndarray[np.float64_t, ndim=2] totalreads, \
+    np.ndarray[np.float64_t, ndim=2] scores, \
+    np.ndarray[np.float64_t, ndim=2] background, \
+    str model, long restarts, double mintol):
     """Learn the model parameters by running an EM algorithm till convergence.
     Return the optimal parameter estimates from a number of EM results starting 
     from random restarts.
@@ -1159,6 +1173,17 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
 
     """
 
+    cdef long restart, iteration, err
+    cdef double change, maxLoglike, Loglike, tol, itertime, totaltime
+    cdef np.ndarray oldtau, negbinmeans
+    cdef Data data, data_null
+    cdef Beta beta
+    cdef Alpha Alpha
+    cdef Omega omega
+    cdef Pi pi, pi_null
+    cdef Tau tau, tau_null
+    cdef Zeta zeta, zeta_null
+
     # transform data into multiscale representation
     data = Data(reads)
     data_null = Data(background)
@@ -1169,11 +1194,9 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
     pi_null = Pi(data_null.J)
     for j in xrange(pi_null.J):
         pi_null.value[j] = np.sum(np.sum(data_null.value[j],0),0) / np.sum(np.sum(data_null.total[j],0),0).astype('float')
-    tau_null = None
-        
+    
+    tau_null = Tau(data_null.J)
     if model=='msCentipede_flexbg':
-        
-        tau_null = Tau(data_null.J)
 
         zeta_null = Zeta(data_null, background.sum(1))
         zeta_null.estim[:,1] = 1
@@ -1184,12 +1207,12 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
         # background overdispersion
         change = np.inf
         while change>1e-2:
-            change = tau_null.estim.copy()
+            oldtau = tau_null.estim.copy()
             
             tau_null.update(data_null, zeta_null, pi_null)
             pi_null.update(data_null, zeta_null, tau_null)
 
-            change = np.abs(change-tau_null.estim).sum() / tau_null.J
+            change = np.abs(oldtau-tau_null.estim).sum() / tau_null.J
 
     maxLoglike = -np.inf
     restart = 0
@@ -1217,14 +1240,13 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
             for j in xrange(pi.J):
                 pi.value[j] = np.sum(data.value[j][0] * zeta.estim[:,1:],0) \
                     / np.sum(data.total[j][0] * zeta.estim[:,1:],0).astype('float')
-            pi.avoid_edges()
 
             # initial log likelihood of the model
             Loglike = likelihood(data, scores, zeta, pi, tau, \
                     alpha, beta, omega, pi_null, tau_null, model)
 
             tol = np.inf
-            iter = 0
+            iteration = 0
 
             while np.abs(tol)>mintol:
 
@@ -1237,8 +1259,8 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
 
                 tol = newLoglike - Loglike
                 Loglike = newLoglike
-                print "Iteration %d: log likelihood = %.7f, change in log likelihood = %.7f, iteration time = %.3f secs"%(iter+1, Loglike, tol, time.time()-itertime)
-                iter += 1
+                print "Iteration %d: log likelihood = %.7f, change in log likelihood = %.7f, iteration time = %.3f secs"%(iteration+1, Loglike, tol, time.time()-itertime)
+                iteration += 1
             totaltime = (time.time()-totaltime)/60.
 
             # test if mean cleavage rate at bound sites is greater than at 
