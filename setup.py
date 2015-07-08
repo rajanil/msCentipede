@@ -11,7 +11,7 @@ import sys
 # py setup.py install
 
 # setup bed parser
-ext_modules = [Extension("setup", sources=["setup.pyx"])]
+ext_modules = [Extension("mscentipede", sources=["mscentipede.pyx"])]
 ext_modules = cythonize(ext_modules)
 
 setup(

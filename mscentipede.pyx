@@ -68,9 +68,6 @@ cdef class Data:
         self.value = dict()
         self.total = dict()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    @cython.nonecheck(False)
     cdef transform_to_multiscale(self, np.ndarray[np.float64_t, ndim=3] reads):
         """Transform a vector of read counts
         into a multiscale representation.
@@ -264,7 +261,7 @@ cdef class Pi:
         # store optimum in data structure
         self.value = dict([(j,x_final[2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
 
-cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+def pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
 
     """Computes part of the likelihood function that has
     terms containing `pi`, along with its gradient
@@ -282,7 +279,7 @@ cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
     tau = kwargs['tau']
 
     F = np.zeros(zeta.estim[:,1].shape, dtype=float)
-    Df = np.zeros(x.shape, dtype=float)
+    Df = np.zeros((x.size,), dtype=float)
 
     for j from 0 <= j < self.J:
         left = 2**j-1
@@ -306,7 +303,7 @@ cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
     
     return f, Df
 
-cdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+def pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
 
     """Computes part of the likelihood function that has
     terms containing `pi`, along with its gradient and hessian
@@ -324,7 +321,7 @@ cdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict
     tau = kwargs['tau']
 
     F = np.zeros(zeta.estim[:,1].shape, dtype=float)
-    Df = np.zeros(x.shape, dtype=float)
+    Df = np.zeros((x.size,), dtype=float)
     hess = np.zeros(x.shape, dtype=float)
 
     for j from 0 <= j < self.J:
@@ -396,7 +393,7 @@ cdef class Tau:
             print "Inf in Tau"
             raise ValueError
 
-cdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+def tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
     """Computes part of the likelihood function that has
     terms containing `tau`, and its gradient.
     """
@@ -439,7 +436,7 @@ cdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs
     
     return F, Df
 
-cdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+def tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
     """Computes part of the likelihood function that has
     terms containing `tau`, and its gradient and hessian.
     """
@@ -538,7 +535,7 @@ cdef class Alpha:
             print "Inf in Alpha"
             raise ValueError
 
-cdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+def alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
     """Computes part of the likelihood function that has
     terms containing `alpha`, and its gradient
     """
@@ -568,7 +565,7 @@ cdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwar
 
     return f, Df
 
-cdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+def alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
     """Computes part of the likelihood function that has
     terms containing `alpha`, and its gradient and hessian
     """
@@ -675,7 +672,7 @@ cdef class Beta:
             print "Inf in Beta"
             raise ValueError        
 
-cdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+def beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
     """Computes part of the likelihood function that has
     terms containing `beta`, and its gradient.
     """
@@ -692,7 +689,7 @@ cdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwarg
     
     return f, Df
 
-cdef tuple beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+def beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
     """Computes part of the likelihood function that has
     terms containing `beta`, and its gradient and hessian.
     """
@@ -1178,7 +1175,7 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=2] reads, \
     cdef np.ndarray oldtau, negbinmeans
     cdef Data data, data_null
     cdef Beta beta
-    cdef Alpha Alpha
+    cdef Alpha alpha
     cdef Omega omega
     cdef Pi pi, pi_null
     cdef Tau tau, tau_null

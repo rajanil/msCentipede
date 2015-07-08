@@ -13,13 +13,17 @@ cdef class Data:
 cdef class Zeta:
 
 	cdef public long N
-	cdef public np.ndarray[np.float64_t, ndim=2] total, prior_log_odds, \
+	cdef public np.ndarray total, prior_log_odds, \
 		footprint_log_likelihood_ratio, total_log_likelihood_ratio, \
 		posterior_log_odds, estim
 
-	cdef update(self)
+	cdef update(self, Data data, np.ndarray[np.float64_t, ndim=2] scores, \
+        Pi pi, Tau tau, Alpha alpha, Beta beta, Omega omega, \
+        Pi pi_null, Tau tau_null, str model)
 
-	cdef infer(self)
+	cdef infer(self, Data data, np.ndarray[np.float64_t, ndim=2] scores, \
+        Pi pi, Tau tau, Alpha alpha, Beta beta, Omega omega, \
+        Pi pi_null, Tau tau_null, str model)
 
 
 cdef class Pi:
