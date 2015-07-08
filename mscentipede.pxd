@@ -31,9 +31,9 @@ cdef class Pi:
 	cdef public long J
 	cdef public dict value
 
-cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
+#cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
 
-cdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
+#cdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
 
 
 cdef class Tau:
@@ -41,9 +41,9 @@ cdef class Tau:
 	cdef public long J
 	cdef public np.ndarray estim
 
-cdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
+#cdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
 
-cdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
+#cdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
 
 
 cdef class Alpha:
@@ -51,9 +51,9 @@ cdef class Alpha:
 	cdef public long R
 	cdef public np.ndarray estim
 
-cdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
+#cdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
 
-cdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
+#cdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
 
 
 cdef class Omega:
@@ -69,9 +69,9 @@ cdef class Beta:
 	cdef public long S
 	cdef public np.ndarray estim
 
-cdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
+#cdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
 
-cdef tuple beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
+#cdef tuple beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs)
 
 
 cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, Tau tau_null, str model)

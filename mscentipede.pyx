@@ -237,17 +237,110 @@ cdef class Pi:
         """Update the estimates of parameter `p` (and `p_o`) in the model.
         """
 
+        def function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+
+            """Computes part of the likelihood function that has
+            terms containing `pi`, along with its gradient
+            """
+
+            cdef Data data
+            cdef Zeta zeta
+            cdef Tau tau
+            cdef long j, J, r, left, right
+            cdef double f
+            cdef np.ndarray func, F, Df, df
+
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            tau = kwargs['tau']
+
+            F = np.zeros((zeta.N,), dtype=float)
+            Df = np.zeros((x.size,), dtype=float)
+
+            for j from 0 <= j < self.J:
+                J = 2**j
+                left = J-1
+                right = 2*J-1
+                func = np.zeros((data.N,J), dtype=float)
+                df = np.zeros((data.N,J), dtype=float)
+                hf = np.zeros((data.N,J), dtype=float)
+                
+                for r from 0 <= r < data.R:
+                    func += gammaln(data.value[j][r] + tau.estim[j] * x[left:right]) \
+                        + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
+                        - gammaln(tau.estim[j] * x[left:right]) - gammaln(tau.estim[j] * (1 - x[left:right]))
+                    df += digamma(data.value[j][r] + tau.estim[j] * x[left:right]) \
+                        - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
+                        - digamma(tau.estim[j] * x[left:right]) + digamma(tau.estim[j] * (1 - x[left:right]))
+                
+                F += np.sum(func,1)
+                Df[left:right] = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
+            
+            f = -1. * np.sum(zeta.estim[:,1] * F)
+            
+            return f, Df
+
+        def function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+
+            """Computes part of the likelihood function that has
+            terms containing `pi`, along with its gradient and hessian
+            """
+
+            cdef Data data
+            cdef Zeta zeta
+            cdef Tau tau
+            cdef long j, J, r, left, right
+            cdef double f
+            cdef np.ndarray func, F, Df, df, hf, hess, Hf 
+
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            tau = kwargs['tau']
+
+            F = np.zeros((zeta.N,), dtype=float)
+            Df = np.zeros((x.size,), dtype=float)
+            hess = np.zeros((x.size,), dtype=float)
+
+            for j from 0 <= j < self.J:
+                J = 2**j
+                left = J-1
+                right = 2*J-1
+                func = np.zeros((data.N,J), dtype=float)
+                df = np.zeros((data.N,J), dtype=float)
+                hf = np.zeros((data.N,J), dtype=float)
+
+                for r from 0 <= r < data.R:
+                    func += gammaln(data.value[j][r] + tau.estim[j] * x[left:right]) \
+                        + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
+                        - gammaln(tau.estim[j] * x[left:right]) - gammaln(tau.estim[j] * (1 - x[left:right]))
+                    df += digamma(data.value[j][r] + tau.estim[j] * x[left:right]) \
+                        - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
+                        - digamma(tau.estim[j] * x[left:right]) + digamma(tau.estim[j] * (1 - x[left:right]))
+                    hf += polygamma(1, data.value[j][r] + tau.estim[j] * x[left:right]) \
+                        + polygamma(1, data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
+                        - polygamma(1, tau.estim[j] * x[left:right]) - polygamma(1, tau.estim[j] * (1 - x[left:right]))
+
+                F += np.sum(func,1)
+                Df[left:right] = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
+                hess[left:right] = -1. * tau.estim[j]**2 * np.sum(zeta.estim[:,1:] * hf,0)
+
+            f = -1. * np.sum(zeta.estim[:,1] * F)
+            Hf = np.diag(hess)
+            
+            return f, Df, Hf
+
         # initialize optimization variable
         xo = np.array([v for j in xrange(self.J) for v in self.value[j]])
+        X = xo.size
 
         # set constraints for optimization variable
-        G = np.vstack((np.diag(-1*np.ones(xo.shape, dtype=float)), \
-                np.diag(np.ones(xo.shape, dtype=float))))
-        h = np.vstack((np.zeros((xo.size,1), dtype=float), \
-                np.ones((xo.size,1), dtype=float)))
+        G = np.vstack((np.diag(-1*np.ones((X,), dtype=float)), \
+                np.diag(np.ones((X,), dtype=float))))
+        h = np.vstack((np.zeros((X,1), dtype=float), \
+                np.ones((X,1), dtype=float)))
 
         # call optimizer
-        x_final = optimizer(xo, pi_function_gradient, pi_function_gradient_hessian, \
+        x_final = optimizer(xo, function_gradient, function_gradient_hessian, \
             G=G, h=h, data=data, zeta=zeta, tau=tau)
 
         if np.isnan(x_final).any():
@@ -260,96 +353,6 @@ cdef class Pi:
 
         # store optimum in data structure
         self.value = dict([(j,x_final[2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
-
-def pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
-
-    """Computes part of the likelihood function that has
-    terms containing `pi`, along with its gradient
-    """
-
-    cdef Data data
-    cdef Zeta zeta
-    cdef Tau tau
-    cdef long j, r, left, right
-    cdef double f
-    cdef np.ndarray func, F, Df, df
-
-    data = kwargs['data']
-    zeta = kwargs['zeta']
-    tau = kwargs['tau']
-
-    F = np.zeros(zeta.estim[:,1].shape, dtype=float)
-    Df = np.zeros((x.size,), dtype=float)
-
-    for j from 0 <= j < self.J:
-        left = 2**j-1
-        right = 2**(j+1)-1
-        func = np.zeros(data.value[j][0].shape, dtype=float)
-        df = np.zeros(data.value[j][0].shape, dtype=float)
-        hf = np.zeros(data.value[j][0].shape, dtype=float)
-        
-        for r from 0 <= r < data.R:
-            func += gammaln(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                - gammaln(tau.estim[j] * x[left:right]) - gammaln(tau.estim[j] * (1 - x[left:right]))
-            df += digamma(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                - digamma(tau.estim[j] * x[left:right]) + digamma(tau.estim[j] * (1 - x[left:right]))
-        
-        F += np.sum(func,1)
-        Df[left:right] = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
-    
-    f = -1. * np.sum(zeta.estim[:,1] * F)
-    
-    return f, Df
-
-def pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
-
-    """Computes part of the likelihood function that has
-    terms containing `pi`, along with its gradient and hessian
-    """
-
-    cdef Data data
-    cdef Zeta zeta
-    cdef Tau tau
-    cdef long j, r, left, right
-    cdef double f
-    cdef np.ndarray func, F, Df, df, hf, hess, Hf 
-
-    data = kwargs['data']
-    zeta = kwargs['zeta']
-    tau = kwargs['tau']
-
-    F = np.zeros(zeta.estim[:,1].shape, dtype=float)
-    Df = np.zeros((x.size,), dtype=float)
-    hess = np.zeros(x.shape, dtype=float)
-
-    for j from 0 <= j < self.J:
-        left = 2**j-1
-        right = 2**(j+1)-1
-        func = np.zeros(data.value[j][0].shape, dtype=float)
-        df = np.zeros(data.value[j][0].shape, dtype=float)
-        hf = np.zeros(data.value[j][0].shape, dtype=float)
-
-        for r from 0 <= r < data.R:
-            func += gammaln(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                - gammaln(tau.estim[j] * x[left:right]) - gammaln(tau.estim[j] * (1 - x[left:right]))
-            df += digamma(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                - digamma(tau.estim[j] * x[left:right]) + digamma(tau.estim[j] * (1 - x[left:right]))
-            hf += polygamma(1, data.value[j][r] + tau.estim[j] * x[left:right]) \
-                + polygamma(1, data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                - polygamma(1, tau.estim[j] * x[left:right]) - polygamma(1, tau.estim[j] * (1 - x[left:right]))
-
-        F += np.sum(func,1)
-        Df[left:right] = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
-        hess[left:right] = -1. * tau.estim[j]**2 * np.sum(zeta.estim[:,1:] * hf,0)
-
-    f = -1. * np.sum(zeta.estim[:,1] * F)
-    Hf = np.diag(hess)
-    
-    return f, Df, Hf
 
 
 cdef class Tau:
@@ -373,17 +376,114 @@ cdef class Tau:
         """Update the estimates of parameter `tau` (and `tau_o`) in the model.
         """
 
+        def function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+            """Computes part of the likelihood function that has
+            terms containing `tau`, and its gradient.
+            """
+
+            cdef Data data
+            cdef Zeta zeta
+            cdef Pi pi
+            cdef long j, r, left, right
+            cdef double F
+            cdef np.ndarray func, f, Df, df
+
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            pi = kwargs['pi']
+
+            func = np.zeros((zeta.N,), dtype=float)
+            Df = np.zeros((x.size,), dtype=float)
+            # loop over each scale
+            for j from 0 <= j < self.J:
+
+                df = np.zeros((zeta.N,), dtype=float)
+                # loop over replicates
+                for r from 0 <= r < data.R:
+
+                    f = gammaln(data.value[j][r] + pi.value[j] * x[j]) \
+                        + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
+                        - gammaln(data.total[j][r] + x[j]) + gammaln(x[j]) \
+                        - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
+                    func += np.sum(f, 1)
+
+                    f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x[j]) \
+                        + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
+                        - digamma(data.total[j][r] + x[j]) + digamma(x[j]) \
+                        - pi.value[j] * digamma(pi.value[j] * x[j]) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
+                    df += np.sum(f, 1)
+
+                Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
+
+            F = -1. * np.sum(zeta.estim[:,1] * func)
+            
+            return F, Df
+
+        def function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+            """Computes part of the likelihood function that has
+            terms containing `tau`, and its gradient and hessian.
+            """
+
+            cdef Data data
+            cdef Zeta zeta
+            cdef Pi pi
+            cdef long j, r, left, right
+            cdef double F
+            cdef np.ndarray func, f, Df, df, hf, hess, Hf
+
+            data = kwargs['data']
+            zeta = kwargs['zeta']
+            pi = kwargs['pi']
+
+            func = np.zeros((zeta.N,), dtype=float)
+            Df = np.zeros((x.size,), dtype=float)
+            hess = np.zeros((x.size,), dtype=float)
+            # loop over each scale
+            for j from 0 <= j < self.J:
+
+                df = np.zeros((zeta.N,), dtype=float)
+                hf = np.zeros((zeta.N,), dtype=float)
+                # loop over replicates
+                for r from 0 <= r < data.R:
+
+                    f = gammaln(data.value[j][r] + pi.value[j] * x[j]) \
+                        + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
+                        - gammaln(data.total[j][r] + x[j]) + gammaln(x[j]) \
+                        - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
+                    func += np.sum(f, 1)
+
+                    f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x[j]) \
+                        + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
+                        - digamma(data.total[j][r] + x[j]) + digamma(x[j]) \
+                        - pi.value[j] * digamma(pi.value[j] * x[j]) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
+                    df += np.sum(f, 1)
+
+                    f = pi.value[j]**2 * polygamma(1, data.value[j][r] + pi.value[j] * x[j]) \
+                        + (1 - pi.value[j])**2 * polygamma(1, data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
+                        - polygamma(1, data.total[j][r] + x[j]) + polygamma(1, x[j]) \
+                        - pi.value[j]**2 * polygamma(1, pi.value[j] * x[j]) \
+                        - (1 - pi.value[j])**2 * polygamma(1, (1 - pi.value[j]) * x[j])
+                    hf += np.sum(f, 1)
+
+                Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
+                hess[j] = -1 * np.sum(zeta.estim[:,1] * hf)
+
+            F = -1. * np.sum(zeta.estim[:,1] * func)
+            Hf = np.diag(hess)
+
+            return F, Df, Hf
+
         # initialize optimization variables
         xo = self.estim.copy()
 
         # set constraints for optimization variables
-        G = np.diag(-1 * np.ones(xo.shape, dtype=float))
-        h = np.zeros((xo.size,1), dtype=float)
+        G = np.diag(-1 * np.ones((self.J,), dtype=float))
+        h = np.zeros((self.J,1), dtype=float)
 
         # call optimizer
-        x_final = optimizer(xo, tau_function_gradient, tau_function_gradient_hessian, \
+        x_final = optimizer(xo, function_gradient, function_gradient_hessian, \
             G=G, h=h, data=data, zeta=zeta, pi=pi)
-        self.estim = x_final.reshape(self.estim.shape)
+        self.estim = x_final
 
         if np.isnan(self.estim).any():
             print "Nan in Tau"
@@ -392,103 +492,6 @@ cdef class Tau:
         if np.isinf(self.estim).any():
             print "Inf in Tau"
             raise ValueError
-
-def tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
-    """Computes part of the likelihood function that has
-    terms containing `tau`, and its gradient.
-    """
-
-    cdef Data data
-    cdef Zeta zeta
-    cdef Pi pi
-    cdef long j, r, left, right
-    cdef double F
-    cdef np.ndarray func, f, Df, df
-
-    data = kwargs['data']
-    zeta = kwargs['zeta']
-    pi = kwargs['pi']
-
-    func = np.zeros(zeta.estim[:,1].shape, dtype=float)
-    Df = np.zeros(x.shape, dtype=float)
-    # loop over each scale
-    for j from 0 <= j < self.J:
-
-        df = np.zeros(zeta.estim[:,1].shape, dtype=float)
-        # loop over replicates
-        for r from 0 <= r < data.R:
-
-            f = gammaln(data.value[j][r] + pi.value[j] * x[j]) \
-                + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                - gammaln(data.total[j][r] + x[j]) + gammaln(x[j]) \
-                - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
-            func += np.sum(f, 1)
-
-            f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x[j]) \
-                + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                - digamma(data.total[j][r] + x[j]) + digamma(x[j]) \
-                - pi.value[j] * digamma(pi.value[j] * x[j]) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
-            df += np.sum(f, 1)
-
-        Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
-
-    F = -1. * np.sum(zeta.estim[:,1] * func)
-    
-    return F, Df
-
-def tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
-    """Computes part of the likelihood function that has
-    terms containing `tau`, and its gradient and hessian.
-    """
-
-    cdef Data data
-    cdef Zeta zeta
-    cdef Pi pi
-    cdef long j, r, left, right
-    cdef double F
-    cdef np.ndarray func, f, Df, df, hf, hess, Hf
-
-    data = kwargs['data']
-    zeta = kwargs['zeta']
-    pi = kwargs['pi']
-
-    func = np.zeros(zeta.estim[:,1].shape, dtype=float)
-    Df = np.zeros(x.shape, dtype=float)
-    hess = np.zeros(x.shape, dtype=float)
-    # loop over each scale
-    for j from 0 <= j < self.J:
-
-        df = np.zeros(zeta.estim[:,1].shape, dtype=float)
-        hf = np.zeros(zeta.estim[:,1].shape, dtype=float)
-        # loop over replicates
-        for r from 0 <= r < data.R:
-
-            f = gammaln(data.value[j][r] + pi.value[j] * x[j]) \
-                + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                - gammaln(data.total[j][r] + x[j]) + gammaln(x[j]) \
-                - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
-            func += np.sum(f, 1)
-
-            f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x[j]) \
-                + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                - digamma(data.total[j][r] + x[j]) + digamma(x[j]) \
-                - pi.value[j] * digamma(pi.value[j] * x[j]) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
-            df += np.sum(f, 1)
-
-            f = pi.value[j]**2 * polygamma(1, data.value[j][r] + pi.value[j] * x[j]) \
-                + (1 - pi.value[j])**2 * polygamma(1, data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                - polygamma(1, data.total[j][r] + x[j]) + polygamma(1, x[j]) \
-                - pi.value[j]**2 * polygamma(1, pi.value[j] * x[j]) \
-                - (1 - pi.value[j])**2 * polygamma(1, (1 - pi.value[j]) * x[j])
-            hf += np.sum(f, 1)
-
-        Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
-        hess[j] = -1 * np.sum(zeta.estim[:,1] * hf)
-
-    F = -1. * np.sum(zeta.estim[:,1] * func)
-    Hf = np.diag(hess)
-
-    return F, Df, Hf
 
 
 cdef class Alpha:
@@ -512,6 +515,70 @@ cdef class Alpha:
         """Update the estimates of parameter `alpha` in the model.
         """
 
+        def function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+            """Computes part of the likelihood function that has
+            terms containing `alpha`, and its gradient
+            """
+
+            cdef long r
+            cdef double f
+            cdef Zeta zeta
+            cdef Omega omega
+            cdef np.ndarray df, Df, constant, zetaestim, func
+
+            zeta = kwargs['zeta']
+            omega = kwargs['omega']
+            constant = kwargs['constant']
+            zetaestim = kwargs['zetaestim']
+
+            func = 0
+            df = np.zeros((2*self.R,), dtype='float')
+
+            for r from 0 <= r < self.R:
+                func = func + np.sum(outsum(gammaln(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim) \
+                    - gammaln(x[2*r:2*r+2]) * zetaestim[0] + constant[r] * x[2*r:2*r+2])
+                df[2*r:2*r+2] = outsum(digamma(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
+                    - digamma(x[2*r:2*r+2]) * zetaestim[0] + constant[r]
+
+            f = -1.*func
+            Df = -1. * df
+
+            return f, Df
+
+        def function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+            """Computes part of the likelihood function that has
+            terms containing `alpha`, and its gradient and hessian
+            """
+
+            cdef long r
+            cdef double f
+            cdef Zeta zeta
+            cdef Omega omega
+            cdef np.ndarray df, Df, hf, Hf, constant, zetaestim, func
+
+            zeta = kwargs['zeta']
+            omega = kwargs['omega']
+            zetaestim = kwargs['zetaestim']
+            constant = kwargs['constant']
+            
+            func = 0
+            df = np.zeros((2*self.R,), dtype='float')
+            hess = np.zeros((2*self.R,), dtype='float')
+
+            for r from 0 <= r < self.R:
+                func = func + np.sum(outsum(gammaln(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim) \
+                    - gammaln(x[2*r:2*r+2]) * zetaestim[0] + constant[r] * x[2*r:2*r+2])
+                df[2*r:2*r+2] = outsum(digamma(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
+                    - digamma(x[2*r:2*r+2]) * zetaestim[0] + constant[r]
+                hess[2*r:2*r+2] = outsum(polygamma(1, zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
+                    - polygamma(1, x[2*r:2*r+2]) * zetaestim[0]
+
+            f = -1.*func
+            Df = -1. * df       
+            Hf = -1. * np.diag(hess)
+
+            return f, Df, Hf
+
         constant = [nplog(omega.estim[r]) * outsum(zeta.estim)[0] for r in xrange(self.R)]
         zetaestim = outsum(zeta.estim)
 
@@ -519,13 +586,13 @@ cdef class Alpha:
         xo = self.estim.ravel()
 
         # set constraints for optimization variables
-        G = np.diag(-1 * np.ones(xo.shape, dtype=float))
-        h = np.zeros((xo.size,1), dtype=float)
+        G = np.diag(-1 * np.ones((2*self.R,), dtype=float))
+        h = np.zeros((2*self.R,1), dtype=float)
 
         # call optimizer
-        x_final = optimizer(xo, alpha_function_gradient, alpha_function_gradient_hessian, \
+        x_final = optimizer(xo, function_gradient, function_gradient_hessian, \
             G=G, h=h, omega=omega, zeta=zeta, constant=constant, zetaestim=zetaestim)
-        self.estim = x_final.reshape(self.estim.shape)
+        self.estim = x_final.reshape(self.R,2)
 
         if np.isnan(self.estim).any():
             print "Nan in Alpha"
@@ -534,70 +601,6 @@ cdef class Alpha:
         if np.isinf(self.estim).any():
             print "Inf in Alpha"
             raise ValueError
-
-def alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
-    """Computes part of the likelihood function that has
-    terms containing `alpha`, and its gradient
-    """
-
-    cdef long r
-    cdef double f
-    cdef Zeta zeta
-    cdef Omega omega
-    cdef np.ndarray df, Df, constant, zetaestim, func
-
-    zeta = kwargs['zeta']
-    omega = kwargs['omega']
-    constant = kwargs['constant']
-    zetaestim = kwargs['zetaestim']
-
-    func = 0
-    df = np.zeros((2*self.R,), dtype='float')
-
-    for r from 0 <= r < self.R:
-        func = func + np.sum(outsum(gammaln(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim) \
-            - gammaln(x[2*r:2*r+2]) * zetaestim[0] + constant[r] * x[2*r:2*r+2])
-        df[2*r:2*r+2] = outsum(digamma(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
-            - digamma(x[2*r:2*r+2]) * zetaestim[0] + constant[r]
-
-    f = -1.*func
-    Df = -1. * df
-
-    return f, Df
-
-def alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
-    """Computes part of the likelihood function that has
-    terms containing `alpha`, and its gradient and hessian
-    """
-
-    cdef long r
-    cdef double f
-    cdef Zeta zeta
-    cdef Omega omega
-    cdef np.ndarray df, Df, hf, Hf, constant, zetaestim, func
-
-    zeta = kwargs['zeta']
-    omega = kwargs['omega']
-    zetaestim = kwargs['zetaestim']
-    constant = kwargs['constant']
-    
-    func = 0
-    df = np.zeros((2*self.R,), dtype='float')
-    hess = np.zeros((2*self.R,), dtype='float')
-
-    for r from 0 <= r < self.R:
-        func = func + np.sum(outsum(gammaln(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim) \
-            - gammaln(x[2*r:2*r+2]) * zetaestim[0] + constant[r] * x[2*r:2*r+2])
-        df[2*r:2*r+2] = outsum(digamma(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
-            - digamma(x[2*r:2*r+2]) * zetaestim[0] + constant[r]
-        hess[2*r:2*r+2] = outsum(polygamma(1, zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
-            - polygamma(1, x[2*r:2*r+2]) * zetaestim[0]
-
-    f = -1.*func
-    Df = -1. * df       
-    Hf = -1. * np.diag(hess)
-
-    return f, Df, Hf
 
 
 cdef class Omega:
@@ -660,9 +663,46 @@ cdef class Beta:
         """Update the estimates of parameter `beta` in the model.
         """
 
+        def function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+            """Computes part of the likelihood function that has
+            terms containing `beta`, and its gradient.
+            """
+
+            scores = kwargs['scores']
+            zeta = kwargs['zeta']
+
+            arg = insum(x * scores,[1])
+            
+            func = arg * zeta.estim[:,1:] - nplog(1 + np.exp(arg))
+            f = -1. * func.sum()
+            
+            Df = -1 * np.sum(scores * (zeta.estim[:,1:] - logistic(-arg)),0)
+            
+            return f, Df
+
+        def function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
+            """Computes part of the likelihood function that has
+            terms containing `beta`, and its gradient and hessian.
+            """
+
+            scores = kwargs['scores']
+            zeta = kwargs['zeta']
+
+            arg = insum(x * scores,[1])
+            
+            func = arg * zeta.estim[:,1:] - nplog(1 + np.exp(arg))
+            f = -1. * func.sum()
+            
+            Df = -1 * np.sum(scores * (zeta.estim[:,1:] - logistic(-arg)),0)
+            
+            larg = scores * logistic(arg) * logistic(-arg)
+            Hf = np.dot(scores.T, larg)
+            
+            return f, Df, Hf
+
         xo = self.estim.copy()
-        self.estim = optimizer(xo, beta_function_gradient, \
-            beta_function_gradient_hessian, scores=scores, zeta=zeta)
+        self.estim = optimizer(xo, function_gradient, \
+            function_gradient_hessian, scores=scores, zeta=zeta)
 
         if np.isnan(self.estim).any():
             print "Nan in Beta"
@@ -670,44 +710,7 @@ cdef class Beta:
 
         if np.isinf(self.estim).any():
             print "Inf in Beta"
-            raise ValueError        
-
-def beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
-    """Computes part of the likelihood function that has
-    terms containing `beta`, and its gradient.
-    """
-
-    scores = kwargs['scores']
-    zeta = kwargs['zeta']
-
-    arg = insum(x * scores,[1])
-    
-    func = arg * zeta.estim[:,1:] - nplog(1 + np.exp(arg))
-    f = -1. * func.sum()
-    
-    Df = -1 * np.sum(scores * (zeta.estim[:,1:] - logistic(-arg)),0)
-    
-    return f, Df
-
-def beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict kwargs):
-    """Computes part of the likelihood function that has
-    terms containing `beta`, and its gradient and hessian.
-    """
-
-    scores = kwargs['scores']
-    zeta = kwargs['zeta']
-
-    arg = insum(x * scores,[1])
-    
-    func = arg * zeta.estim[:,1:] - nplog(1 + np.exp(arg))
-    f = -1. * func.sum()
-    
-    Df = -1 * np.sum(scores * (zeta.estim[:,1:] - logistic(-arg)),0)
-    
-    larg = scores * logistic(arg) * logistic(-arg)
-    Hf = np.dot(scores.T, larg)
-    
-    return f, Df, Hf
+            raise ValueError
 
 
 def optimizer(np.ndarray[np.float64_t, ndim=1] xo, function_gradient, function_gradient_hessian, **kwargs):
@@ -1331,7 +1334,6 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
 
     """
 
-    (N,L,R) = reads.shape
     data = Data(reads)
     data_null = Data(background)
     scores = np.hstack((np.ones((data.N,1), dtype=float), scores))
