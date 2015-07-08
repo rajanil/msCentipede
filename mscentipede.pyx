@@ -3,7 +3,7 @@ cimport numpy as np
 import cvxopt as cvx
 from cvxopt import solvers
 from scipy.special import digamma, gammaln, polygamma
-import time, math, pdb
+import sys, time, math, pdb
 
 # suppress optimizer output
 solvers.options['show_progress'] = False
@@ -26,13 +26,10 @@ cdef np.ndarray[np.float64_t, ndim=1] outsum(np.ndarray[np.float64_t, ndim=2] ar
     Returns
         thesum : array
 
-    .. note::
-        This implementation is much faster than `numpy.sum`.
-
     """
 
     cdef np.ndarray thesum
-    thesum = sum([a for a in arr])
+    thesum = np.sum(arr,0)
     thesum = thesum.reshape(1,thesum.size)
     return thesum
 
@@ -190,7 +187,6 @@ cdef class Zeta:
         Pi pi_null, Tau tau_null, str model):
 
         cdef long j
-        cdef np.ndarray[np.float64_t, ndim=2] footprint_logodds, prior_logodds, negbin_logodds
         cdef Data lhoodA, lhoodB
 
         lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model)
@@ -248,11 +244,12 @@ cdef class Pi:
             cdef Tau tau
             cdef long j, J, r, left, right
             cdef double f
-            cdef np.ndarray func, F, Df, df
+            cdef np.ndarray func, F, Df, df, alpha, beta, data_alpha, data_beta, zetaestim
 
             data = kwargs['data']
             zeta = kwargs['zeta']
             tau = kwargs['tau']
+            zetaestim = kwargs['zetaestim']
 
             F = np.zeros((zeta.N,), dtype=float)
             Df = np.zeros((x.size,), dtype=float)
@@ -263,18 +260,18 @@ cdef class Pi:
                 right = 2*J-1
                 func = np.zeros((data.N,J), dtype=float)
                 df = np.zeros((data.N,J), dtype=float)
-                hf = np.zeros((data.N,J), dtype=float)
+                alpha = x[left:right] * tau.estim[j]
+                beta = (1-x[left:right]) * tau.estim[j]
                 
                 for r from 0 <= r < data.R:
-                    func += gammaln(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                        + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                        - gammaln(tau.estim[j] * x[left:right]) - gammaln(tau.estim[j] * (1 - x[left:right]))
-                    df += digamma(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                        - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                        - digamma(tau.estim[j] * x[left:right]) + digamma(tau.estim[j] * (1 - x[left:right]))
+                    data_alpha = data.value[j][r] + alpha
+                    data_beta = data.total[j][r] - data.value[j][r] + beta
+                    func += gammaln(data_alpha) + gammaln(data_beta)
+                    df += digamma(data_alpha) - digamma(data_beta)
                 
-                F += np.sum(func,1)
-                Df[left:right] = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
+                F += np.sum(func,1) - np.sum(gammaln(alpha) + gammaln(beta)) * data.R * J
+                Df[left:right] = -1. * tau.estim[j] * (np.sum(zeta.estim[:,1:] * df,0) \
+                    - zetaestim * (digamma(alpha) - digamma(beta)))
             
             f = -1. * np.sum(zeta.estim[:,1] * F)
             
@@ -296,6 +293,7 @@ cdef class Pi:
             data = kwargs['data']
             zeta = kwargs['zeta']
             tau = kwargs['tau']
+            zetaestim = kwargs['zetaestim']
 
             F = np.zeros((zeta.N,), dtype=float)
             Df = np.zeros((x.size,), dtype=float)
@@ -308,21 +306,21 @@ cdef class Pi:
                 func = np.zeros((data.N,J), dtype=float)
                 df = np.zeros((data.N,J), dtype=float)
                 hf = np.zeros((data.N,J), dtype=float)
+                alpha = x[left:right] * tau.estim[j]
+                beta = (1-x[left:right]) * tau.estim[j]
 
                 for r from 0 <= r < data.R:
-                    func += gammaln(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                        + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                        - gammaln(tau.estim[j] * x[left:right]) - gammaln(tau.estim[j] * (1 - x[left:right]))
-                    df += digamma(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                        - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                        - digamma(tau.estim[j] * x[left:right]) + digamma(tau.estim[j] * (1 - x[left:right]))
-                    hf += polygamma(1, data.value[j][r] + tau.estim[j] * x[left:right]) \
-                        + polygamma(1, data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                        - polygamma(1, tau.estim[j] * x[left:right]) - polygamma(1, tau.estim[j] * (1 - x[left:right]))
+                    data_alpha = data.value[j][r] + alpha
+                    data_beta = data.total[j][r] - data.value[j][r] + beta
+                    func += gammaln(data_alpha) + gammaln(data_beta)
+                    df += digamma(data_alpha) - digamma(data_beta)
+                    hf += polygamma(1, data_alpha) + polygamma(1, data_beta)
 
-                F += np.sum(func,1)
-                Df[left:right] = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
-                hess[left:right] = -1. * tau.estim[j]**2 * np.sum(zeta.estim[:,1:] * hf,0)
+                F += np.sum(func,1) - np.sum(gammaln(alpha) + gammaln(beta)) * data.R * J
+                Df[left:right] = -1. * tau.estim[j] * (np.sum(zeta.estim[:,1:] * df,0) \
+                    - zetaestim * (digamma(alpha) - digamma(beta)))
+                hess[left:right] = -1. * tau.estim[j]**2 * (np.sum(zeta.estim[:,1:] * hf,0) \
+                    - zetaestim * (polygamma(1, alpha) + polygamma(1, beta)))
 
             f = -1. * np.sum(zeta.estim[:,1] * F)
             Hf = np.diag(hess)
@@ -331,6 +329,7 @@ cdef class Pi:
 
         # initialize optimization variable
         xo = np.array([v for j in xrange(self.J) for v in self.value[j]])
+        zetaestim = zeta.estim[:,1].sum()
         X = xo.size
 
         # set constraints for optimization variable
@@ -341,7 +340,7 @@ cdef class Pi:
 
         # call optimizer
         x_final = optimizer(xo, function_gradient, function_gradient_hessian, \
-            G=G, h=h, data=data, zeta=zeta, tau=tau)
+            G=G, h=h, data=data, zeta=zeta, tau=tau, zetaestim=zetaestim)
 
         if np.isnan(x_final).any():
             print "Nan in Pi"
@@ -367,7 +366,7 @@ cdef class Tau:
 
     """
 
-    def __cinit__(self, double J):
+    def __cinit__(self, long J):
 
         self.J = J
         self.estim = 10*np.random.rand(self.J)
@@ -386,31 +385,37 @@ cdef class Tau:
             cdef Pi pi
             cdef long j, r, left, right
             cdef double F
-            cdef np.ndarray func, f, Df, df
+            cdef np.ndarray func, f, Df, df, alpha, beta, data_alpha, data_beta, data_x
 
             data = kwargs['data']
             zeta = kwargs['zeta']
             pi = kwargs['pi']
+            zetaestim = kwargs['zetaestim']
 
             func = np.zeros((zeta.N,), dtype=float)
             Df = np.zeros((x.size,), dtype=float)
             # loop over each scale
             for j from 0 <= j < self.J:
 
+                alpha = pi.value[j] * x[j]
+                beta = (1 - pi.value[j]) * x[j]
                 df = np.zeros((zeta.N,), dtype=float)
                 # loop over replicates
                 for r from 0 <= r < data.R:
 
-                    f = gammaln(data.value[j][r] + pi.value[j] * x[j]) \
-                        + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                        - gammaln(data.total[j][r] + x[j]) + gammaln(x[j]) \
+                    data_alpha = data.value[j][r] + alpha
+                    data_beta = data.total[j][r] - data.value[j][r] + beta
+                    data_x = data.total[j][r] + x[j]
+                    f = gammaln(data_alpha) + gammaln(data_beta) \
+                        - gammaln(data_x) + gammaln(x[j]) \
                         - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
                     func += np.sum(f, 1)
 
-                    f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x[j]) \
-                        + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                        - digamma(data.total[j][r] + x[j]) + digamma(x[j]) \
-                        - pi.value[j] * digamma(pi.value[j] * x[j]) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
+                    f = pi.value[j] * digamma(data_alpha) \
+                        + (1 - pi.value[j]) * gammaln(data_beta) \
+                        - digamma(data_x) + digamma(x[j]) \
+                        - pi.value[j] * digamma(pi.value[j] * x[j]) \
+                        - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
                     df += np.sum(f, 1)
 
                 Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
@@ -429,11 +434,12 @@ cdef class Tau:
             cdef Pi pi
             cdef long j, r, left, right
             cdef double F
-            cdef np.ndarray func, f, Df, df, hf, hess, Hf
+            cdef np.ndarray func, f, Df, df, hf, hess, Hf, alpha, beta, data_alpha, data_beta, data_x
 
             data = kwargs['data']
             zeta = kwargs['zeta']
             pi = kwargs['pi']
+            zetaestim = kwargs['zetaestim']
 
             func = np.zeros((zeta.N,), dtype=float)
             Df = np.zeros((x.size,), dtype=float)
@@ -441,26 +447,32 @@ cdef class Tau:
             # loop over each scale
             for j from 0 <= j < self.J:
 
+                alpha = pi.value[j] * x[j]
+                beta = (1 - pi.value[j]) * x[j]
                 df = np.zeros((zeta.N,), dtype=float)
                 hf = np.zeros((zeta.N,), dtype=float)
                 # loop over replicates
                 for r from 0 <= r < data.R:
 
-                    f = gammaln(data.value[j][r] + pi.value[j] * x[j]) \
-                        + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                        - gammaln(data.total[j][r] + x[j]) + gammaln(x[j]) \
+                    data_alpha = data.value[j][r] + alpha
+                    data_beta = data.total[j][r] - data.value[j][r] + beta
+                    data_x = data.total[j][r] + x[j]
+
+                    f = gammaln(data_alpha) + gammaln(data_beta) \
+                        - gammaln(data_x) + gammaln(x[j]) \
                         - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
                     func += np.sum(f, 1)
 
-                    f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x[j]) \
-                        + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                        - digamma(data.total[j][r] + x[j]) + digamma(x[j]) \
-                        - pi.value[j] * digamma(pi.value[j] * x[j]) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
+                    f = pi.value[j] * digamma(data_alpha) \
+                        + (1 - pi.value[j]) * gammaln(data_beta) \
+                        - digamma(data_x) + digamma(x[j]) \
+                        - pi.value[j] * digamma(pi.value[j] * x[j]) \
+                        - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
                     df += np.sum(f, 1)
 
-                    f = pi.value[j]**2 * polygamma(1, data.value[j][r] + pi.value[j] * x[j]) \
-                        + (1 - pi.value[j])**2 * polygamma(1, data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                        - polygamma(1, data.total[j][r] + x[j]) + polygamma(1, x[j]) \
+                    f = pi.value[j]**2 * polygamma(1, data_alpha) \
+                        + (1 - pi.value[j])**2 * polygamma(1, data_beta) \
+                        - polygamma(1, data_x) + polygamma(1, x[j]) \
                         - pi.value[j]**2 * polygamma(1, pi.value[j] * x[j]) \
                         - (1 - pi.value[j])**2 * polygamma(1, (1 - pi.value[j]) * x[j])
                     hf += np.sum(f, 1)
@@ -475,6 +487,7 @@ cdef class Tau:
 
         # initialize optimization variables
         xo = self.estim.copy()
+        zetaestim = np.sum(zeta.estim[:,1])
 
         # set constraints for optimization variables
         G = np.diag(-1 * np.ones((self.J,), dtype=float))
@@ -482,7 +495,7 @@ cdef class Tau:
 
         # call optimizer
         x_final = optimizer(xo, function_gradient, function_gradient_hessian, \
-            G=G, h=h, data=data, zeta=zeta, pi=pi)
+            G=G, h=h, data=data, zeta=zeta, pi=pi, zetaestim=zetaestim)
         self.estim = x_final
 
         if np.isnan(self.estim).any():
@@ -524,7 +537,7 @@ cdef class Alpha:
             cdef double f
             cdef Zeta zeta
             cdef Omega omega
-            cdef np.ndarray df, Df, constant, zetaestim, func
+            cdef np.ndarray df, Df, constant, zetaestim, func, xzeta
 
             zeta = kwargs['zeta']
             omega = kwargs['omega']
@@ -535,10 +548,11 @@ cdef class Alpha:
             df = np.zeros((2*self.R,), dtype='float')
 
             for r from 0 <= r < self.R:
-                func = func + np.sum(outsum(gammaln(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim) \
-                    - gammaln(x[2*r:2*r+2]) * zetaestim[0] + constant[r] * x[2*r:2*r+2])
-                df[2*r:2*r+2] = outsum(digamma(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
-                    - digamma(x[2*r:2*r+2]) * zetaestim[0] + constant[r]
+                xzeta = zeta.total[:,r:r+1] + x[2*r:2*r+2]
+                func = func + np.sum(np.sum(gammaln(xzeta) * zeta.estim, 0) \
+                    - gammaln(x[2*r:2*r+2]) * zetaestim + constant[r] * x[2*r:2*r+2])
+                df[2*r:2*r+2] = np.sum(digamma(xzeta) * zeta.estim, 0) \
+                    - digamma(x[2*r:2*r+2]) * zetaestim + constant[r]
 
             f = -1.*func
             Df = -1. * df
@@ -554,7 +568,7 @@ cdef class Alpha:
             cdef double f
             cdef Zeta zeta
             cdef Omega omega
-            cdef np.ndarray df, Df, hf, Hf, constant, zetaestim, func
+            cdef np.ndarray df, Df, hf, Hf, constant, zetaestim, func, xzeta
 
             zeta = kwargs['zeta']
             omega = kwargs['omega']
@@ -566,12 +580,13 @@ cdef class Alpha:
             hess = np.zeros((2*self.R,), dtype='float')
 
             for r from 0 <= r < self.R:
-                func = func + np.sum(outsum(gammaln(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim) \
-                    - gammaln(x[2*r:2*r+2]) * zetaestim[0] + constant[r] * x[2*r:2*r+2])
-                df[2*r:2*r+2] = outsum(digamma(zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
-                    - digamma(x[2*r:2*r+2]) * zetaestim[0] + constant[r]
-                hess[2*r:2*r+2] = outsum(polygamma(1, zeta.total[:,r:r+1] + x[2*r:2*r+2]) * zeta.estim)[0] \
-                    - polygamma(1, x[2*r:2*r+2]) * zetaestim[0]
+                xzeta = zeta.total[:,r:r+1] + x[2*r:2*r+2]
+                func = func + np.sum(np.sum(gammaln(xzeta) * zeta.estim, 0) \
+                    - gammaln(x[2*r:2*r+2]) * zetaestim + constant[r] * x[2*r:2*r+2])
+                df[2*r:2*r+2] = np.sum(digamma(xzeta) * zeta.estim, 0) \
+                    - digamma(x[2*r:2*r+2]) * zetaestim + constant[r]
+                hess[2*r:2*r+2] = np.sum(polygamma(1, xzeta) * zeta.estim, 0) \
+                    - polygamma(1, x[2*r:2*r+2]) * zetaestim
 
             f = -1.*func
             Df = -1. * df       
@@ -579,8 +594,10 @@ cdef class Alpha:
 
             return f, Df, Hf
 
-        constant = [nplog(omega.estim[r]) * outsum(zeta.estim)[0] for r in xrange(self.R)]
-        zetaestim = outsum(zeta.estim)
+        cdef np.ndarray zetaestim, constant, xo, G, h, x_final
+
+        zetaestim = np.sum(zeta.estim,0)
+        constant = zetaestim*nplog(omega.estim)
 
         # initialize optimization variables
         xo = self.estim.ravel()
@@ -627,8 +644,8 @@ cdef class Omega:
 
         cdef np.ndarray numerator, denominator
 
-        numerator = outsum(zeta.estim)[0] * alpha.estim
-        denominator = np.array([outsum(zeta.estim * (estim + zeta.total[:,r:r+1]))[0] \
+        numerator = np.sum(zeta.estim,0) * alpha.estim
+        denominator = np.array([np.sum(zeta.estim * (estim + zeta.total[:,r:r+1]), 0) \
             for r,estim in enumerate(alpha.estim)])
         self.estim = numerator / denominator
 
@@ -844,14 +861,14 @@ cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, T
     lhood_unbound = Data()
 
     for j from 0 <= j < data.J:
-        value = outsum(data.value[j])[0]
-        total = outsum(data.total[j])[0]
+        value = np.sum(data.value[j],0)
+        total = np.sum(data.total[j],0)
         
-        lhood_bound.value[j] = outsum([gammaln(data.value[j][r] + pi.value[j] * tau.estim[j]) \
+        lhood_bound.value[j] = np.sum([gammaln(data.value[j][r] + pi.value[j] * tau.estim[j]) \
             + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * tau.estim[j]) \
             - gammaln(data.total[j][r] + tau.estim[j]) + gammaln(tau.estim[j]) \
             - gammaln(pi.value[j] * tau.estim[j]) - gammaln((1 - pi.value[j]) * tau.estim[j]) \
-            for r in xrange(data.R)])[0]
+            for r in xrange(data.R)],0)
 
         if model in ['msCentipede','msCentipede_flexbgmean']:
             
@@ -860,11 +877,11 @@ cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, T
     
         elif model=='msCentipede_flexbg':
             
-            lhood_unbound.value[j] = outsum([gammaln(data.value[j][r] + pi_null.value[j] * tau_null.estim[j]) \
+            lhood_unbound.value[j] = np.sum([gammaln(data.value[j][r] + pi_null.value[j] * tau_null.estim[j]) \
                 + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi_null.value[j]) * tau_null.estim[j]) \
                 - gammaln(data.total[j][r] + tau_null.estim[j]) + gammaln(tau_null.estim[j]) \
                 - gammaln(pi_null.value[j] * tau_null.estim[j]) - gammaln((1 - pi_null.value[j]) * tau_null.estim[j]) \
-                for r in xrange(data.R)])[0]
+                for r in xrange(data.R)],0)
 
     return lhood_bound, lhood_unbound
 
@@ -1120,7 +1137,7 @@ cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
                 # ensure constraints on variables are satisfied
                 invalid = np.hstack((invalid, np.logical_or(newparam<0, newparam>1)))
                 parameter.value = dict([(j,newparam[2**j-1:2**(j+1)-1]) \
-                    for j in xrange(self.J)])
+                    for j in xrange(parameter.J)])
         if np.any(invalid):
             a = (a-1)/2.
             if np.abs(a+1)<1e-4:
