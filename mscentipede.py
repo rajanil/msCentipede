@@ -1010,7 +1010,7 @@ def square_EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null
                 # ensure constraints on variables are satisfied
                 invalid = np.hstack((invalid, np.logical_or(newparam<0, newparam>1)))
                 parameter.value = dict([(j,newparam[2**j-1:2**(j+1)-1]) \
-                    for j in xrange(self.J)])
+                    for j in xrange(parameter.J)])
         if np.any(invalid):
             a = (a-1)/2.
             if np.abs(a+1)<1e-4:

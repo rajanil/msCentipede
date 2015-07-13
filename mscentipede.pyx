@@ -16,23 +16,6 @@ MAX = np.finfo(np.double).max
 logistic = lambda x: 1./(1+np.exp(x))
 insum = lambda x,axes: np.apply_over_axes(np.sum,x,axes)
 
-cdef np.ndarray[np.float64_t, ndim=1] outsum(np.ndarray[np.float64_t, ndim=2] arr):
-
-    """Summation over the first axis, without changing length of shape.
-
-    Arguments
-        arr : array
-
-    Returns
-        thesum : array
-
-    """
-
-    cdef np.ndarray thesum
-    thesum = np.sum(arr,0)
-    thesum = thesum.reshape(1,thesum.size)
-    return thesum
-
 def nplog(x):
     """Compute the natural logarithm, handling very
     small floats appropriately.
