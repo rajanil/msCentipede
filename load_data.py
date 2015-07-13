@@ -113,8 +113,8 @@ class BamFile():
 
             # fetch all reads overlapping this genomic location
             sam_iter = self._handle.fetch(reference=chrom, start=left, end=right)
-            forward = np.zeros((width,), dtype=np.uint)
-            reverse = np.zeros((width,), dtype=np.uint)
+            forward = np.zeros((width,), dtype=np.float64)
+            reverse = np.zeros((width,), dtype=np.float64)
 
             for read in sam_iter:
 
@@ -163,7 +163,7 @@ class BamFile():
 
             # cap the read count at any location
             count[count>MAX_VAL] = MAX_VAL
-            counts.append(count.astype(np.uint16))
+            counts.append(count.astype(np.float64))
 
         counts = np.array(counts)
         return counts

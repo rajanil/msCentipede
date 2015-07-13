@@ -904,27 +904,27 @@ def EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model
             alpha, beta, omega, pi_null, tau_null, model)
 
     # update multi-scale parameters
-    #starttime = time.time()
+    starttime = time.time()
     pi.update(data, zeta, tau)
-    #print "p_jk update in %.3f secs"%(time.time()-starttime)
+    print "p_jk update in %.3f secs"%(time.time()-starttime)
 
-    #starttime = time.time()
+    starttime = time.time()
     tau.update(data, zeta, pi)
-    #print "tau update in %.3f secs"%(time.time()-starttime)
+    print "tau update in %.3f secs"%(time.time()-starttime)
     
     # update negative binomial parameters
-    #starttime = time.time()
+    starttime = time.time()
     omega.update(zeta, alpha)
-    #print "omega update in %.3f secs"%(time.time()-starttime)
+    print "omega update in %.3f secs"%(time.time()-starttime)
 
-    #starttime = time.time()
+    starttime = time.time()
     alpha.update(zeta, omega)
-    #print "alpha update in %.3f secs"%(time.time()-starttime)
+    print "alpha update in %.3f secs"%(time.time()-starttime)
 
     # update prior parameters
-    #starttime = time.time()
+    starttime = time.time()
     beta.update(scores, zeta)
-    #print "beta update in %.3f secs"%(time.time()-starttime)
+    print "beta update in %.3f secs"%(time.time()-starttime)
 
 
 def square_EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model):

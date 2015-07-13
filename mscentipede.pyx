@@ -257,6 +257,7 @@ cdef class Pi:
                     - zetaestim * (digamma(alpha) - digamma(beta)))
             
             f = -1. * np.sum(zeta.estim[:,1] * F)
+            print f, Df
             
             return f, Df
 
@@ -307,13 +308,17 @@ cdef class Pi:
 
             f = -1. * np.sum(zeta.estim[:,1] * F)
             Hf = np.diag(hess)
+            print f, Df, hess
             
             return f, Df, Hf
 
         # initialize optimization variable
         xo = np.array([v for j in xrange(self.J) for v in self.value[j]])
-        zetaestim = zeta.estim[:,1].sum()
+        print xo
         X = xo.size
+        print X
+        zetaestim = zeta.estim[:,1].sum()
+        print zetaestim
 
         # set constraints for optimization variable
         G = np.vstack((np.diag(-1*np.ones((X,), dtype=float)), \
@@ -942,7 +947,7 @@ cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
     LL = P_0 * zeta.estim[:,:1] + insum(P_1 * zeta.estim[:,1:],[1]) + apriori * (1 - zeta.estim[:,:1]) \
         - nplog(1 + np.exp(apriori)) - insum(zeta.estim * nplog(zeta.estim),[1])
-    
+ 
     L = LL.sum() / data.N
 
     if np.isnan(L):
@@ -1008,13 +1013,13 @@ cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
     # update multi-scale parameters
     starttime = time.time()
+    tau.update(data, zeta, pi)
+    print "tau update in %.3f secs"%(time.time()-starttime)
+
+    starttime = time.time()
     pi.update(data, zeta, tau)
     print "p_jk update in %.3f secs"%(time.time()-starttime)
 
-    starttime = time.time()
-    tau.update(data, zeta, pi)
-    print "tau update in %.3f secs"%(time.time()-starttime)
-    
     # update negative binomial parameters
     starttime = time.time()
     omega.update(zeta, alpha)
@@ -1131,10 +1136,10 @@ cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model)
 
 
-def estimate_optimal_model(np.ndarray[np.float64_t, ndim=2] reads, \
+def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     np.ndarray[np.float64_t, ndim=2] totalreads, \
     np.ndarray[np.float64_t, ndim=2] scores, \
-    np.ndarray[np.float64_t, ndim=2] background, \
+    np.ndarray[np.float64_t, ndim=3] background, \
     str model, long restarts, double mintol):
     """Learn the model parameters by running an EM algorithm till convergence.
     Return the optimal parameter estimates from a number of EM results starting 
@@ -1185,8 +1190,10 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=2] reads, \
     cdef Zeta zeta, zeta_null
 
     # transform data into multiscale representation
-    data = Data(reads)
-    data_null = Data(background)
+    data = Data()
+    data.transform_to_multiscale(reads)
+    data_null = Data()
+    data_null.transform_to_multiscale(background)
     scores = np.hstack((np.ones((data.N,1), dtype=float), scores))
     del reads
 
@@ -1198,7 +1205,7 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=2] reads, \
     tau_null = Tau(data_null.J)
     if model=='msCentipede_flexbg':
 
-        zeta_null = Zeta(data_null, background.sum(1))
+        zeta_null = Zeta(background.sum(1), data_null.N, False)
         zeta_null.estim[:,1] = 1
         zeta_null.estim[:,0] = 0
 
@@ -1236,14 +1243,17 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=2] reads, \
             beta = Beta(scores)
 
             # initialize posterior over latent variables
-            zeta = Zeta(data, totalreads)
+            zeta = Zeta(totalreads, data.N, False)
             for j in xrange(pi.J):
                 pi.value[j] = np.sum(data.value[j][0] * zeta.estim[:,1:],0) \
                     / np.sum(data.total[j][0] * zeta.estim[:,1:],0).astype('float')
+                pi.value[j][pi.value[j]<1e-10] = 1e-10
+                pi.value[j][pi.value[j]>1-1e-10] = 1-1e-10
 
             # initial log likelihood of the model
             Loglike = likelihood(data, scores, zeta, pi, tau, \
                     alpha, beta, omega, pi_null, tau_null, model)
+            print Loglike
 
             tol = np.inf
             iteration = 0
@@ -1251,7 +1261,7 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=2] reads, \
             while np.abs(tol)>mintol:
 
                 itertime = time.time()
-                square_EM(data, scores, zeta, pi, tau, \
+                EM(data, scores, zeta, pi, tau, \
                         alpha, beta, omega, pi_null, tau_null, model)
 
                 newLoglike = likelihood(data, scores, zeta, pi, tau, \
@@ -1334,8 +1344,10 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
 
     """
 
-    data = Data(reads)
-    data_null = Data(background)
+    data = Data()
+    data.transform_to_multiscale(reads)
+    data_null = Data()
+    data_null.transform_to_multiscale(background)
     scores = np.hstack((np.ones((data.N,1), dtype=float), scores))
     del reads
 
@@ -1363,7 +1375,7 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
 
         if data_null.N>1000:
 
-            zeta_null = Zeta(data_null, background.sum(1))
+            zeta_null = Zeta(background.sum(1), data_null.N, False)
             zeta_null.estim[:,1] = 1
             zeta_null.estim[:,0] = 0
 
@@ -1379,7 +1391,7 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
 
                 change = np.abs(change-tau_null.estim).sum()
 
-    zeta = Zeta(data, totalreads, infer=True)
+    zeta = Zeta(totalreads, data.N, True)
 
     zeta.infer(data, scores, pi, tau, alpha, beta, omega, \
         pi_null, tau_null, model)
