@@ -5,7 +5,7 @@ from cpython cimport bool
 cdef class Data:
 
 	cdef public long N, L, R, J
-	cdef public dict value, total
+	cdef public dict valueA, valueB, total
 
 	cdef transform_to_multiscale(self, np.ndarray[np.float64_t, ndim=3] reads)
 
@@ -31,27 +31,27 @@ cdef class Pi:
 	cdef public long J
 	cdef public dict value
 
-cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
+cpdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
 
-cdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
+cpdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
 
 cdef class Tau:
 
 	cdef public long J
 	cdef public np.ndarray estim
 
-cdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
+cpdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
 
-cdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
+cpdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
 
 cdef class Alpha:
 
 	cdef public long R
 	cdef public np.ndarray estim
 
-cdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
+cpdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
 
-cdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
+cpdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
 
 cdef class Omega:
 
@@ -66,9 +66,9 @@ cdef class Beta:
 	cdef public long S
 	cdef public np.ndarray estim
 
-cdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
+cpdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
 
-cdef tuple beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
+cpdef tuple beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
 
 cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, Tau tau_null, str model)
 

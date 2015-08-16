@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.optimize as spopt
 import cvxopt as cvx
 from cvxopt import solvers
 from scipy.special import digamma, gammaln, polygamma
@@ -6,6 +7,8 @@ import time, math, pdb
 
 # suppress optimizer output
 solvers.options['show_progress'] = False
+solvers.options['maxiters'] = 40
+np.random.seed(10)
 
 # defining some constants
 EPS = np.finfo(np.double).tiny
@@ -216,7 +219,7 @@ class Pi(Data):
         Data.__init__(self)
         self.J = J
         for j in xrange(self.J):
-            self.value[j] = np.random.rand(2**j)
+            self.value[j] = np.empty((2**j,), dtype='float')
 
     def update(self, data, zeta, tau):
         """Update the estimates of parameter `p` (and `p_o`) in the model.
@@ -229,18 +232,14 @@ class Pi(Data):
             data = kwargs['data']
             zeta = kwargs['zeta']
             tau = kwargs['tau']
+            j = kwargs['j']
 
-            F = np.zeros(zeta.estim[:,1].shape, dtype=float)
-            for j in xrange(self.J):
-                left = 2**j-1
-                right = 2**(j+1)-1
-                func = np.zeros(data.value[j][0].shape, dtype=float)
-                for r in xrange(data.R):
-                    func += gammaln(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                        + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                        - gammaln(tau.estim[j] * x[left:right]) - gammaln(tau.estim[j] * (1 - x[left:right]))
-                F += np.sum(func,1)
-            f = -1. * np.sum(zeta.estim[:,1] * F)
+            func = np.zeros(data.value[j][0].shape, dtype=float)
+            for r in xrange(data.R):
+                func += gammaln(data.value[j][r] + tau.estim[j] * x) \
+                    + gammaln(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1-x)) \
+                    - gammaln(tau.estim[j] * x) - gammaln(tau.estim[j] * (1-x))
+            f = -1. * np.sum(zeta.estim[:,1] * np.sum(func,1))
             return f
 
         def gradient(x, kwargs):
@@ -250,17 +249,14 @@ class Pi(Data):
             data = kwargs['data']
             zeta = kwargs['zeta']
             tau = kwargs['tau']
+            j = kwargs['j']
 
-            Df = np.zeros(x.shape, dtype=float)
-            for j in xrange(self.J):
-                left = 2**j-1
-                right = 2**(j+1)-1
-                df = np.zeros(data.value[j][0].shape, dtype=float)
-                for r in xrange(data.R):
-                    df += digamma(data.value[j][r] + tau.estim[j] * x[left:right]) \
-                    - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                    - digamma(tau.estim[j] * x[left:right]) + digamma(tau.estim[j] * (1 - x[left:right]))
-                Df[left:right] = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
+            df = np.zeros(data.value[j][0].shape, dtype=float)
+            for r in xrange(data.R):
+                df += digamma(data.value[j][r] + tau.estim[j] * x) \
+                - digamma(data.total[j][r] - data.value[j][r] + tau.estim[j] * (1-x)) \
+                - digamma(tau.estim[j] * x) + digamma(tau.estim[j] * (1-x))
+            Df = -1. * tau.estim[j] * np.sum(zeta.estim[:,1:] * df,0)
             return Df
 
         def hessian(x, kwargs):
@@ -270,52 +266,61 @@ class Pi(Data):
             data = kwargs['data']
             zeta = kwargs['zeta']
             tau = kwargs['tau']
+            j = kwargs['j']
 
-            hess = np.zeros(x.shape, dtype=float)
-            for j in xrange(self.J):
-                left = 2**j-1
-                right = 2**(j+1)-1
-                hf = np.zeros(data.value[j][0].shape, dtype=float)
-                for r in xrange(data.R):
-                    hf += polygamma(1, data.value[j][r] + tau.estim[j] * x[left:right]) \
-                    + polygamma(1, data.total[j][r] - data.value[j][r] + tau.estim[j] * (1 - x[left:right])) \
-                    - polygamma(1, tau.estim[j] * x[left:right]) - polygamma(1, tau.estim[j] * (1 - x[left:right]))
-                hess[left:right] = -1. * tau.estim[j]**2 * np.sum(zeta.estim[:,1:] * hf,0)
+            hf = np.zeros(data.value[j][0].shape, dtype=float)
+            for r in xrange(data.R):
+                hf += polygamma(1, data.value[j][r] + tau.estim[j] * x) \
+                + polygamma(1, data.total[j][r] - data.value[j][r] + tau.estim[j] * (1-x)) \
+                - polygamma(1, tau.estim[j] * x) - polygamma(1, tau.estim[j] * (1-x))
+            hess = -1. * tau.estim[j]**2 * np.sum(zeta.estim[:,1:] * hf,0)
             
             Hf = np.diag(hess)
             return Hf
 
-        # initialize optimization variable
-        xo = np.array([v for j in xrange(self.J) for v in self.value[j]])
+        for j in xrange(self.J):
 
-        # set constraints for optimization variable
-        G = np.vstack((np.diag(-1*np.ones(xo.shape, dtype=float)), \
-                np.diag(np.ones(xo.shape, dtype=float))))
-        h = np.vstack((np.zeros((xo.size,1), dtype=float), \
-                np.ones((xo.size,1), dtype=float)))
+            # initialize optimization variable
+            xo = self.value[j]
+            X = xo.size
 
-        # call optimizer
-        x_final = optimizer(xo, function, gradient, hessian, \
-            G=G, h=h, data=data, zeta=zeta, tau=tau)
+            # set constraints for optimization variable
+            if tau.estim[j]<2:
+                xmin = 0.5*np.ones((X,1), dtype='float')
+                xmax = 0.5*np.ones((X,1), dtype='float')
+            else:
+                xmin = 1./tau.estim[j]*np.ones((X,1), dtype='float')
+                xmax = (1-1./tau.estim[j])*np.ones((X,1), dtype='float')
+            G = np.vstack((np.diag(-1*np.ones((X,), dtype='float')), \
+                    np.diag(np.ones((X,), dtype='float'))))
+            h = np.vstack((-1*xmin,xmax))
 
-        if np.isnan(x_final).any():
-            print "Nan in Pi"
-            raise ValueError
+            args = dict([('G',G),('h',h),('data',data),('zeta',zeta),('tau',tau),('j',j)])
 
-        if np.isinf(x_final).any():
-            print "Inf in Pi"
-            raise ValueError
+            # call optimizer
+            optimized = False
+            while not optimized:
+                try:
+                    self.value[j] = optimizer(xo, function, gradient, hessian, args)
+                    optimized = True
+                except ValueError:
+                    dx = xmax-xmin
+                    xo[dx>0] = xmin + np.random.rand(X,1)/dx
+                    xo[dx==0] = xmin
 
-        # store optimum in data structure
-        self.value = dict([(j,x_final[2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
+            if np.isnan(self.value[j]).any():
+                print "Nan in Pi"
+                raise ValueError
 
-        self.avoid_edges()
+            if np.isinf(self.value[j]).any():
+                print "Inf in Pi"
+                raise ValueError
 
     def avoid_edges(self):
 
         for j in xrange(self.J):
-            self.value[j][self.value[j]==0] = 1e-10
-            self.value[j][self.value[j]==1] = 1-1e-10
+            self.value[j][self.value[j]<1e-10] = 1e-10
+            self.value[j][self.value[j]>1-1e-10] = 1-1e-10
 
 class Tau():
     """
@@ -332,7 +337,7 @@ class Tau():
     def __init__(self, J):
 
         self.J = J
-        self.estim = 10*np.random.rand(self.J)
+        self.estim = np.empty((self.J,), dtype='float')
 
     def update(self, data, zeta, pi):
         """Update the estimates of parameter `tau` (and `tau_o`) in the model.
@@ -346,18 +351,16 @@ class Tau():
             data = kwargs['data']
             zeta = kwargs['zeta']
             pi = kwargs['pi']
+            j = kwargs['j']
 
             func = np.zeros(zeta.estim[:,1].shape, dtype=float)
-            # loop over each scale
-            for j in xrange(self.J):
-
-                # loop over replicates
-                for r in xrange(data.R):
-                    F = gammaln(data.value[j][r] + pi.value[j] * x[j]) \
-                        + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                        - gammaln(data.total[j][r] + x[j]) + gammaln(x[j]) \
-                        - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
-                    func += np.sum(F, 1)
+            # loop over replicates
+            for r in xrange(data.R):
+                F = gammaln(data.value[j][r] + pi.value[j] * x) \
+                    + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x) \
+                    - gammaln(data.total[j][r] + x) + gammaln(x) \
+                    - gammaln(pi.value[j] * x) - gammaln((1 - pi.value[j]) * x)
+                func += np.sum(F, 1)
 
             F = -1. * np.sum(zeta.estim[:,1] * func)
             return F
@@ -369,21 +372,18 @@ class Tau():
             data = kwargs['data']
             zeta = kwargs['zeta']
             pi = kwargs['pi']
+            j = kwargs['j']
 
-            Df = np.zeros(x.shape, dtype=float)
-            # loop over each scale
-            for j in xrange(self.J):
-
-                # loop over replicates
-                df = np.zeros(zeta.estim[:,1].shape, dtype=float)
-                for r in xrange(data.R):
-                    f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x[j]) \
-                        + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                        - digamma(data.total[j][r] + x[j]) + digamma(x[j]) \
-                        - pi.value[j] * digamma(pi.value[j] * x[j]) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
-                    df += np.sum(f, 1)
-                Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
-
+            # loop over replicates
+            Df = np.empty((1,), dtype='float')
+            df = np.zeros(zeta.estim[:,1].shape, dtype=float)
+            for r in xrange(data.R):
+                f = pi.value[j] * digamma(data.value[j][r] + pi.value[j] * x) \
+                    + (1 - pi.value[j]) * digamma(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x) \
+                    - digamma(data.total[j][r] + x) + digamma(x) \
+                    - pi.value[j] * digamma(pi.value[j] * x) - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x)
+                df += np.sum(f, 1)
+            Df[0] = -1 * np.sum(zeta.estim[:,1] * df)
             return Df
 
         def hessian(x, kwargs):
@@ -393,36 +393,50 @@ class Tau():
             data = kwargs['data']
             zeta = kwargs['zeta']
             pi = kwargs['pi']
+            j = kwargs['j']
 
-            hess = np.zeros(x.shape, dtype=float)
-            # loop over each scale
-            for j in xrange(self.J):
-
-                # loop over replicates
-                hf = np.zeros(zeta.estim[:,1].shape, dtype=float)
-                for r in xrange(data.R):
-                    f = pi.value[j]**2 * polygamma(1, data.value[j][r] + pi.value[j] * x[j]) \
-                        + (1 - pi.value[j])**2 * polygamma(1, data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x[j]) \
-                        - polygamma(1, data.total[j][r] + x[j]) + polygamma(1, x[j]) \
-                        - pi.value[j]**2 * polygamma(1, pi.value[j] * x[j]) \
-                        - (1 - pi.value[j])**2 * polygamma(1, (1 - pi.value[j]) * x[j])
-                    hf += np.sum(f, 1)
-                hess[j] = -1 * np.sum(zeta.estim[:,1] * hf)
+            # loop over replicates
+            hess = np.empty((1,), dtype='float')
+            hf = np.zeros(zeta.estim[:,1].shape, dtype=float)
+            for r in xrange(data.R):
+                f = pi.value[j]**2 * polygamma(1, data.value[j][r] + pi.value[j] * x) \
+                    + (1 - pi.value[j])**2 * polygamma(1, data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * x) \
+                    - polygamma(1, data.total[j][r] + x) + polygamma(1, x) \
+                    - pi.value[j]**2 * polygamma(1, pi.value[j] * x) \
+                    - (1 - pi.value[j])**2 * polygamma(1, (1 - pi.value[j]) * x)
+                hf += np.sum(f, 1)
+            hess[0] = -1 * np.sum(zeta.estim[:,1] * hf)
 
             Hf = np.diag(hess)
             return Hf
 
-        # initialize optimization variables
-        xo = self.estim.copy()
+        for j in xrange(self.J):
 
-        # set constraints for optimization variables
-        G = np.diag(-1 * np.ones(xo.shape, dtype=float))
-        h = np.zeros((xo.size,1), dtype=float)
+            # initialize optimization variables
+            xo = self.estim[j:j+1]
 
-        # call optimizer
-        x_final = optimizer(xo, function, gradient, hessian, \
-            G=G, h=h, data=data, zeta=zeta, pi=pi)
-        self.estim = x_final.reshape(self.estim.shape)
+            # set constraints for optimization variables
+            G = np.diag(-1 * np.ones((1,), dtype=float))
+            minj = 1./min([pi.value[j].min(), (1-pi.value[j]).min()])
+            xmin = np.array(minj).reshape(1,1)
+            h = -1*xmin
+
+            args = dict([('j',j),('G',G),('h',h),('data',data),('zeta',zeta),('pi',pi)])
+
+            # call optimizer
+            optimized = False
+            while not optimized:
+                try:
+                    x_final = optimizer(xo, function, gradient, hessian, args)
+                    optimized = True
+                except ValueError as err:
+                    xo = xmin.ravel()+100*np.random.rand()
+                    bounds = [(minj, None)]
+                    solution = spopt.fmin_l_bfgs_b(function, xo, fprime=gradient, \
+                        args=(args,), bounds=bounds)
+                    x_final = solution[0]
+                    optimized = True
+            self.estim[j:j+1] = x_final
 
         if np.isnan(self.estim).any():
             print "Nan in Tau"
@@ -514,9 +528,10 @@ class Alpha():
         G = np.diag(-1 * np.ones(xo.shape, dtype=float))
         h = np.zeros((xo.size,1), dtype=float)
 
+        args = dict([('G',G),('h',h),('omega',omega),('zeta',zeta),('constant',constant),('zetaestim',zetaestim)])
+
         # call optimizer
-        x_final = optimizer(xo, function, gradient, hessian, \
-            G=G, h=h, omega=omega, zeta=zeta, constant=constant, zetaestim=zetaestim)
+        x_final = optimizer(xo, function, gradient, hessian, args)
         self.estim = x_final.reshape(self.estim.shape)
 
         if np.isnan(self.estim).any():
@@ -625,7 +640,8 @@ class Beta():
             return Hf
 
         xo = self.estim.copy()
-        self.estim = optimizer(xo, function, gradient, hessian, scores=scores, zeta=zeta)
+        args = dict([('scores',scores),('zeta',zeta)])
+        self.estim = optimizer(xo, function, gradient, hessian, args)
 
         if np.isnan(self.estim).any():
             print "Nan in Beta"
@@ -636,7 +652,7 @@ class Beta():
             raise ValueError        
 
 
-def optimizer(xo, function, gradient, hessian, **kwargs):
+def optimizer(xo, function, gradient, hessian, kwargs):
     """Calls the appropriate nonlinear convex optimization solver 
     in the package `cvxopt` to find optimal values for the relevant
     parameters, given subroutines that evaluate a function, 
@@ -687,36 +703,18 @@ def optimizer(xo, function, gradient, hessian, **kwargs):
         return cvx.matrix(f), cvx.matrix(Df), cvx.matrix(Hf)
 
     # warm start for the optimization
-    optimized = False
     V = xo.size
     x_init = xo.reshape(V,1)
 
-    while not optimized:
+    # call the optimization subroutine in cvxopt
+    if kwargs.has_key('G'):
+        # call a constrained nonlinear solver
+        solution = solvers.cp(F, G=cvx.matrix(kwargs['G']), h=cvx.matrix(kwargs['h']))
+    else:
+        # call an unconstrained nonlinear solver
+        solution = solvers.cp(F)
 
-        try:
-
-            # call the optimization subroutine in cvxopt
-            if kwargs.has_key('G'):
-                # call a constrained nonlinear solver
-                solution = solvers.cp(F, G=cvx.matrix(kwargs['G']), h=cvx.matrix(kwargs['h']))
-            else:
-                # call an unconstrained nonlinear solver
-                solution = solvers.cp(F)
-
-            # check if optimal value has been reached; 
-            # if not, re-optimize with a cold start
-            if solution['status']=='optimal':
-                optimized = True
-                x_final = np.array(solution['x']).ravel()
-            else:
-                # cold start
-                x_init = np.random.rand(V,1)
-
-        except ValueError:
-
-            # if any parameter becomes Inf or Nan during optimization,
-            # re-optimize with a cold start
-            x_init = np.random.rand(V,1)
+    x_final = np.array(solution['x']).ravel()
 
     return x_final
 
@@ -911,7 +909,7 @@ def EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model
     starttime = time.time()
     tau.update(data, zeta, pi)
     print "tau update in %.3f secs"%(time.time()-starttime)
-    
+
     # update negative binomial parameters
     starttime = time.time()
     omega.update(zeta, alpha)
@@ -925,7 +923,6 @@ def EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model
     starttime = time.time()
     beta.update(scores, zeta)
     print "beta update in %.3f secs"%(time.time()-starttime)
-
 
 def square_EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model):
     """Accelerated update of model parameters and posterior probability of binding.
@@ -1069,6 +1066,7 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
     pi_null = Pi(data_null.J)
     for j in xrange(pi_null.J):
         pi_null.value[j] = np.sum(np.sum(data_null.value[j],0),0) / np.sum(np.sum(data_null.total[j],0),0).astype('float')
+    tau_null = Tau(data_null.J)
     tau_null = None
         
     if model=='msCentipede_flexbg':
@@ -1117,11 +1115,19 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
             for j in xrange(pi.J):
                 pi.value[j] = np.sum(data.value[j][0] * zeta.estim[:,1:],0) \
                     / np.sum(data.total[j][0] * zeta.estim[:,1:],0).astype('float')
-            pi.avoid_edges()
+                mask = pi.value[j]>0
+                pi.value[j][~mask] = pi.value[j][mask].min()
+                mask = pi.value[j]<1
+                pi.value[j][~mask] = pi.value[j][mask].max()
+                minj = 1./min([pi.value[j].min(), (1-pi.value[j]).min()])
+                if minj<2:
+                    minj = 2.
+                tau.estim[j] = minj+10*np.random.rand()
 
             # initial log likelihood of the model
             Loglike = likelihood(data, scores, zeta, pi, tau, \
                     alpha, beta, omega, pi_null, tau_null, model)
+            print Loglike
 
             tol = np.inf
             iter = 0
@@ -1129,7 +1135,7 @@ def estimate_optimal_model(reads, totalreads, scores, background, model, restart
             while np.abs(tol)>mintol:
 
                 itertime = time.time()
-                square_EM(data, scores, zeta, pi, tau, \
+                EM(data, scores, zeta, pi, tau, \
                         alpha, beta, omega, pi_null, tau_null, model)
 
                 newLoglike = likelihood(data, scores, zeta, pi, tau, \

@@ -1,12 +1,17 @@
 import numpy as np
 cimport numpy as np
+import cython
+cimport cython
 import cvxopt as cvx
 from cvxopt import solvers
 from scipy.special import digamma, gammaln, polygamma
+import scipy.optimize as spopt
 import sys, time, math, pdb
 
 # suppress optimizer output
 solvers.options['show_progress'] = False
+solvers.options['maxiters'] = 20
+np.random.seed(10)
 
 # defining some constants
 EPS = np.finfo(np.double).tiny
@@ -45,7 +50,8 @@ cdef class Data:
         self.L = 0
         self.R = 0
         self.J = 0
-        self.value = dict()
+        self.valueA = dict()
+        self.valueB = dict()
         self.total = dict()
 
     cdef transform_to_multiscale(self, np.ndarray[np.float64_t, ndim=3] reads):
@@ -66,7 +72,8 @@ cdef class Data:
         for j from 0 <= j < self.J:
             size = self.L/(2**(j+1))
             self.total[j] = np.array([reads[:,k*size:(k+2)*size,:].sum(1) for k in xrange(0,2**(j+1),2)]).T
-            self.value[j] = np.array([reads[:,k*size:(k+1)*size,:].sum(1) for k in xrange(0,2**(j+1),2)]).T
+            self.valueA[j] = np.array([reads[:,k*size:(k+1)*size,:].sum(1) for k in xrange(0,2**(j+1),2)]).T
+            self.valueB[j] = self.total[j] - self.valueA[j]
 
     def inverse_transform(self):
         """Transform a multiscale representation of the data or parameters,
@@ -98,7 +105,8 @@ cdef class Data:
         newcopy.L = self.L
         newcopy.R = self.R
         for j from 0 <= j < self.J:
-            newcopy.value[j] = self.value[j]
+            newcopy.valueA[j] = self.valueA[j]
+            newcopy.valueB[j] = self.valueB[j]
             newcopy.total[j] = self.total[j]
 
         return newcopy
@@ -150,7 +158,7 @@ cdef class Zeta:
         lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model)
 
         for j from 0 <= j < data.J:
-            footprint_logodds += insum(lhoodA.value[j] - lhoodB.value[j],[1])
+            footprint_logodds += insum(lhoodA.valueA[j] - lhoodB.valueA[j],[1])
 
         prior_logodds = insum(beta.estim * scores, [1])
         negbin_logodds = insum(gammaln(self.total + alpha.estim.T[1]) \
@@ -175,7 +183,7 @@ cdef class Zeta:
         lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model)
 
         for j from 0 <= j < data.J:
-            self.footprint_log_likelihood_ratio += insum(lhoodA.value[j] - lhoodB.value[j],[1])
+            self.footprint_log_likelihood_ratio += insum(lhoodA.valueA[j] - lhoodB.valueA[j],[1])
         self.footprint_log_likelihood_ratio = self.footprint_log_likelihood_ratio / np.log(10)
 
         self.prior_log_odds = insum(beta.estim * scores, [1]) / np.log(10)
@@ -210,40 +218,61 @@ cdef class Pi:
         self.J = J
         self.value = dict()
         for j from 0 <= j < self.J:
-            self.value[j] = np.random.rand(2**j)
+            self.value[j] = np.empty((2**j,), dtype='float')
+
+    def __reduce__(self):
+        return (rebuild_Pi, (self.J,self.value))
 
     def update(self, Data data, Zeta zeta, Tau tau):
         """Update the estimates of parameter `p` (and `p_o`) in the model.
         """
 
-        # initialize optimization variable
-        xo = np.array([v for j in xrange(self.J) for v in self.value[j]])
-        X = xo.size
         zetaestim = zeta.estim[:,1].sum()
 
-        # set constraints for optimization variable
-        G = np.vstack((np.diag(-1*np.ones((X,), dtype=float)), \
-                np.diag(np.ones((X,), dtype=float))))
-        h = np.vstack((np.zeros((X,1), dtype=float), \
-                np.ones((X,1), dtype=float)))
-
-        args = dict([('G',G),('h',h),('data',data),('zeta',zeta),('tau',tau),('zetaestim',zetaestim)])
-
         # call optimizer
-        x_final = optimizer(xo, pi_function_gradient, pi_function_gradient_hessian, args)
+        for j in xrange(self.J):
 
-        if np.isnan(x_final).any():
-            print "Nan in Pi"
-            raise ValueError
+            # initialize optimization variable
+            xo = self.value[j].copy()
+            X = xo.size
 
-        if np.isinf(x_final).any():
-            print "Inf in Pi"
-            raise ValueError
+            # set constraints for optimization variable
+            xmin = 1./tau.estim[j]*np.ones((X,1),dtype=float)
+            xmax = (1-1./tau.estim[j])*np.ones((X,1),dtype=float)
+            G = np.vstack((np.diag(-1*np.ones((X,), dtype=float)), \
+                    np.diag(np.ones((X,), dtype=float))))
+            h = np.vstack((-1*xmin,xmax))
 
-        # store optimum in data structure
-        self.value = dict([(j,x_final[2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
+            # additional arguments
+            args = dict([('G',G),('h',h),('data',data),('zeta',zeta),('tau',tau),('zetaestim',zetaestim),('j',j)])
+    
+            # call optimizer
+            x_final = optimizer(xo, pi_function_gradient, pi_function_gradient_hessian, args)
 
-cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
+            if np.isnan(x_final).any():
+                print "Nan in Pi"
+                raise ValueError
+
+            if np.isinf(x_final).any():
+                print "Inf in Pi"
+                raise ValueError
+
+            # store optimum in data structure
+            self.value[j] = x_final
+
+    def avoid_edges(self):
+
+        for j in xrange(self.J):
+            self.value[j][self.value[j]<1e-10] = 1e-10
+            self.value[j][self.value[j]>1-1e-10] = 1-1e-10
+
+def rebuild_Pi(J, value):
+
+    pi = Pi(J)
+    pi.value = value
+    return pi
+
+cpdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
 
     """Computes part of the likelihood function that has
     terms containing `pi`, along with its gradient
@@ -252,42 +281,38 @@ cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
     cdef Data data
     cdef Zeta zeta
     cdef Tau tau
-    cdef long j, J, r, left, right
-    cdef double f
-    cdef np.ndarray func, F, Df, df, alpha, beta, data_alpha, data_beta, zetaestim
+    cdef long j, J, r
+    cdef double f, zetaestim
+    cdef np.ndarray func, F, Df, df, alpha, beta, data_alpha, data_beta
 
     data = args['data']
     zeta = args['zeta']
     tau = args['tau']
     zetaestim = args['zetaestim']
+    j = args['j']
 
-    F = np.zeros((zeta.N,), dtype=float)
-    Df = np.zeros((x.size,), dtype=float)
-
-    for j from 0 <= j < tau.J:
-        J = 2**j
-        left = J-1
-        right = 2*J-1
-        func = np.zeros((data.N,J), dtype=float)
-        df = np.zeros((data.N,J), dtype=float)
-        alpha = x[left:right] * tau.estim[j]
-        beta = (1-x[left:right]) * tau.estim[j]
-        
-        for r from 0 <= r < data.R:
-            data_alpha = data.value[j][r] + alpha
-            data_beta = data.total[j][r] - data.value[j][r] + beta
-            func += gammaln(data_alpha) + gammaln(data_beta)
-            df += digamma(data_alpha) - digamma(data_beta)
-        
-        F += np.sum(func,1) - np.sum(gammaln(alpha) + gammaln(beta)) * data.R * J
-        Df[left:right] = -1. * tau.estim[j] * (np.sum(zeta.estim[:,1:] * df,0) \
-            - zetaestim * (digamma(alpha) - digamma(beta)))
+    J = 2**j
+    func = np.zeros((data.N,J), dtype=float)
+    df = np.zeros((data.N,J), dtype=float)
+    alpha = x * tau.estim[j]
+    beta = (1-x) * tau.estim[j]
+    
+    for r from 0 <= r < data.R:
+        data_alpha = data.valueA[j][r] + alpha
+        data_beta = data.valueB[j][r] + beta
+        func += gammaln(data_alpha) + gammaln(data_beta)
+        df += digamma(data_alpha) - digamma(data_beta)
+    
+    F = np.sum(func,1) - np.sum(gammaln(alpha) + gammaln(beta)) * data.R
+    Df = tau.estim[j] * (np.sum(zeta.estim[:,1:] * df,0) \
+        - zetaestim * (digamma(alpha) - digamma(beta)) * data.R)
     
     f = -1. * np.sum(zeta.estim[:,1] * F)
+    Df = -1. * Df
     
     return f, Df
 
-cdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args):
+cpdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args):
 
     """Computes part of the likelihood function that has
     terms containing `pi`, along with its gradient and hessian
@@ -296,45 +321,42 @@ cdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict
     cdef Data data
     cdef Zeta zeta
     cdef Tau tau
-    cdef long j, J, r, left, right
-    cdef double f
+    cdef long j, J, r
+    cdef double f, zetaestim
     cdef np.ndarray func, F, Df, df, hf, hess, Hf 
 
     data = args['data']
     zeta = args['zeta']
     tau = args['tau']
     zetaestim = args['zetaestim']
+    j = args['j']
 
-    F = np.zeros((zeta.N,), dtype=float)
-    Df = np.zeros((x.size,), dtype=float)
     hess = np.zeros((x.size,), dtype=float)
 
-    for j from 0 <= j < tau.J:
-        J = 2**j
-        left = J-1
-        right = 2*J-1
-        func = np.zeros((data.N,J), dtype=float)
-        df = np.zeros((data.N,J), dtype=float)
-        hf = np.zeros((data.N,J), dtype=float)
-        alpha = x[left:right] * tau.estim[j]
-        beta = (1-x[left:right]) * tau.estim[j]
+    J = 2**j
+    func = np.zeros((data.N,J), dtype=float)
+    df = np.zeros((data.N,J), dtype=float)
+    hf = np.zeros((data.N,J), dtype=float)
+    alpha = x * tau.estim[j]
+    beta = (1-x) * tau.estim[j]
 
-        for r from 0 <= r < data.R:
-            data_alpha = data.value[j][r] + alpha
-            data_beta = data.total[j][r] - data.value[j][r] + beta
-            func += gammaln(data_alpha) + gammaln(data_beta)
-            df += digamma(data_alpha) - digamma(data_beta)
-            hf += polygamma(1, data_alpha) + polygamma(1, data_beta)
+    for r from 0 <= r < data.R:
+        data_alpha = data.valueA[j][r] + alpha
+        data_beta = data.valueB[j][r] + beta
+        func += gammaln(data_alpha) + gammaln(data_beta)
+        df += digamma(data_alpha) - digamma(data_beta)
+        hf += polygamma(1, data_alpha) + polygamma(1, data_beta)
 
-        F += np.sum(func,1) - np.sum(gammaln(alpha) + gammaln(beta)) * data.R * J
-        Df[left:right] = -1. * tau.estim[j] * (np.sum(zeta.estim[:,1:] * df,0) \
-            - zetaestim * (digamma(alpha) - digamma(beta)))
-        hess[left:right] = -1. * tau.estim[j]**2 * (np.sum(zeta.estim[:,1:] * hf,0) \
-            - zetaestim * (polygamma(1, alpha) + polygamma(1, beta)))
+    F = np.sum(func,1) - np.sum(gammaln(alpha) + gammaln(beta)) * data.R
+    Df = tau.estim[j] * (np.sum(zeta.estim[:,1:] * df,0) \
+        - zetaestim * (digamma(alpha) - digamma(beta)) * data.R)
+    hess = tau.estim[j]**2 * (np.sum(zeta.estim[:,1:] * hf,0) \
+        - zetaestim * (polygamma(1, alpha) + polygamma(1, beta)) * data.R)
 
     f = -1. * np.sum(zeta.estim[:,1] * F)
-    Hf = np.diag(hess)
-    
+    Df = -1. * Df
+    Hf = np.diag(-1.*hess)
+ 
     return f, Df, Hf
 
 
@@ -353,25 +375,42 @@ cdef class Tau:
     def __cinit__(self, long J):
 
         self.J = J
-        self.estim = 10*np.random.rand(self.J)
+        self.estim = np.empty((self.J,), dtype='float')
+
+    def __reduce__(self):
+        return (rebuild_Tau, (self.J,self.estim))
 
     def update(self, Data data, Zeta zeta, Pi pi):
         """Update the estimates of parameter `tau` (and `tau_o`) in the model.
         """
 
-        # initialize optimization variables
-        xo = self.estim.copy()
         zetaestim = np.sum(zeta.estim[:,1])
 
-        # set constraints for optimization variables
-        G = np.diag(-1 * np.ones((self.J,), dtype=float))
-        h = np.zeros((self.J,1), dtype=float)
+        for j in xrange(self.J):
 
-        args = dict([('G',G),('h',h),('data',data),('zeta',zeta),('pi',pi),('zetaestim',zetaestim)])
+            # initialize optimization variables
+            xo = self.estim[j:j+1]
 
-        # call optimizer
-        x_final = optimizer(xo, tau_function_gradient, tau_function_gradient_hessian, args)
-        self.estim = x_final
+            # set constraints for optimization variables
+            minj = 1./min([np.min(pi.value[j]), np.min(1-pi.value[j])])
+            xmin = np.array([minj])
+            G = np.diag(-1 * np.ones((1,), dtype=float))
+            h = -1*xmin.reshape(1,1)
+
+            # additional arguments
+            args = dict([('j',j),('G',G),('h',h),('data',data),('zeta',zeta),('pi',pi),('zetaestim',zetaestim)])
+
+            # call optimizer
+            try:
+                x_final = optimizer(xo, tau_function_gradient, tau_function_gradient_hessian, args)
+            except ValueError:
+                xo = xmin+100*np.random.rand()
+                bounds = [(minj, None)]
+                solution = spopt.fmin_l_bfgs_b(tau_function_gradient, xo, \
+                    args=(args,), bounds=bounds)
+                x_final = solution[0]
+
+            self.estim[j:j+1] = x_final
 
         if np.isnan(self.estim).any():
             print "Nan in Tau"
@@ -381,7 +420,13 @@ cdef class Tau:
             print "Inf in Tau"
             raise ValueError
 
-cdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
+def rebuild_Tau(J, estim):
+
+    tau = Tau(J)
+    tau.estim = estim
+    return tau
+
+cpdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
     """Computes part of the likelihood function that has
     terms containing `tau`, and its gradient.
     """
@@ -389,48 +434,45 @@ cdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
     cdef Data data
     cdef Zeta zeta
     cdef Pi pi
-    cdef long j, r, left, right
-    cdef double F
-    cdef np.ndarray func, f, Df, df, alpha, beta, data_alpha, data_beta, data_x
+    cdef long j, J, r, left, right
+    cdef double F, ffunc, dff, zetaestim
+    cdef np.ndarray func, ff, Df, df, alpha, beta, data_alpha, data_beta, data_x
 
     data = args['data']
     zeta = args['zeta']
     pi = args['pi']
     zetaestim = args['zetaestim']
+    j = args['j']
 
     func = np.zeros((zeta.N,), dtype=float)
+    ffunc = 0
     Df = np.zeros((x.size,), dtype=float)
-    # loop over each scale
-    for j from 0 <= j < pi.J:
 
-        alpha = pi.value[j] * x[j]
-        beta = (1 - pi.value[j]) * x[j]
-        df = np.zeros((zeta.N,), dtype=float)
-        # loop over replicates
-        for r from 0 <= r < data.R:
+    alpha = pi.value[j] * x
+    beta = (1 - pi.value[j]) * x
+    ffunc = ffunc + data.R * np.sum(gammaln(x) - gammaln(alpha) - gammaln(beta))
+    dff = data.R * np.sum(digamma(x) - pi.value[j] * digamma(alpha) - (1 - pi.value[j]) * digamma(beta))
+    df = np.zeros((zeta.N,), dtype=float)
+    # loop over replicates
+    for r from 0 <= r < data.R:
 
-            data_alpha = data.value[j][r] + alpha
-            data_beta = data.total[j][r] - data.value[j][r] + beta
-            data_x = data.total[j][r] + x[j]
-            f = gammaln(data_alpha) + gammaln(data_beta) \
-                - gammaln(data_x) + gammaln(x[j]) \
-                - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
-            func += np.sum(f, 1)
+        data_alpha = data.valueA[j][r] + alpha
+        data_beta = data.valueB[j][r] + beta
+        data_x = data.total[j][r] + x
 
-            f = pi.value[j] * digamma(data_alpha) \
-                + (1 - pi.value[j]) * gammaln(data_beta) \
-                - digamma(data_x) + digamma(x[j]) \
-                - pi.value[j] * digamma(pi.value[j] * x[j]) \
-                - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
-            df += np.sum(f, 1)
+        func = func + np.sum(gammaln(data_alpha),1) \
+            + np.sum(gammaln(data_beta),1) - np.sum(gammaln(data_x),1)
 
-        Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
+        df = df + np.sum(pi.value[j]*digamma(data_alpha),1) \
+            + np.sum((1-pi.value[j])*digamma(data_beta),1) \
+            - np.sum(digamma(data_x),1)
 
-    F = -1. * np.sum(zeta.estim[:,1] * func)
+    Df[0] = -1. * (np.sum(zeta.estim[:,1] * df) + zetaestim * dff)
+    F = -1. * (np.sum(zeta.estim[:,1] * func) + zetaestim * ffunc)
     
     return F, Df
 
-cdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args):
+cpdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args):
     """Computes part of the likelihood function that has
     terms containing `tau`, and its gradient and hessian.
     """
@@ -439,54 +481,49 @@ cdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dic
     cdef Zeta zeta
     cdef Pi pi
     cdef long j, r, left, right
-    cdef double F
-    cdef np.ndarray func, f, Df, df, hf, hess, Hf, alpha, beta, data_alpha, data_beta, data_x
+    cdef double F, ffunc, dff, hff, zetaestim
+    cdef np.ndarray func, ff, Df, df, hf, hess, Hf, alpha, beta, data_alpha, data_beta, data_x
 
     data = args['data']
     zeta = args['zeta']
     pi = args['pi']
     zetaestim = args['zetaestim']
+    j = args['j']
 
     func = np.zeros((zeta.N,), dtype=float)
+    ffunc = 0
     Df = np.zeros((x.size,), dtype=float)
     hess = np.zeros((x.size,), dtype=float)
     # loop over each scale
-    for j from 0 <= j < pi.J:
 
-        alpha = pi.value[j] * x[j]
-        beta = (1 - pi.value[j]) * x[j]
-        df = np.zeros((zeta.N,), dtype=float)
-        hf = np.zeros((zeta.N,), dtype=float)
-        # loop over replicates
-        for r from 0 <= r < data.R:
+    alpha = pi.value[j] * x
+    beta = (1 - pi.value[j]) * x
+    ffunc = ffunc + data.R * np.sum(gammaln(x) - gammaln(alpha) - gammaln(beta))
+    dff = data.R * np.sum(digamma(x) - pi.value[j] * digamma(alpha) - (1 - pi.value[j]) * digamma(beta))
+    hff = data.R * np.sum(polygamma(1, x) - pi.value[j]**2 * polygamma(1, alpha) \
+        - (1-pi.value[j])**2 * polygamma(1, beta))
+    df = np.zeros((zeta.N,), dtype=float)
+    hf = np.zeros((zeta.N,), dtype=float)
+    # loop over replicates
+    for r from 0 <= r < data.R:
 
-            data_alpha = data.value[j][r] + alpha
-            data_beta = data.total[j][r] - data.value[j][r] + beta
-            data_x = data.total[j][r] + x[j]
+        data_alpha = data.valueA[j][r] + alpha
+        data_beta = data.valueB[j][r] + beta
+        data_x = data.total[j][r] + x
 
-            f = gammaln(data_alpha) + gammaln(data_beta) \
-                - gammaln(data_x) + gammaln(x[j]) \
-                - gammaln(pi.value[j] * x[j]) - gammaln((1 - pi.value[j]) * x[j])
-            func += np.sum(f, 1)
+        func = func + np.sum(gammaln(data_alpha),1) + np.sum(gammaln(data_beta),1) - np.sum(gammaln(data_x),1)
 
-            f = pi.value[j] * digamma(data_alpha) \
-                + (1 - pi.value[j]) * gammaln(data_beta) \
-                - digamma(data_x) + digamma(x[j]) \
-                - pi.value[j] * digamma(pi.value[j] * x[j]) \
-                - (1 - pi.value[j]) * digamma((1 - pi.value[j]) * x[j])
-            df += np.sum(f, 1)
+        df = df + np.sum(pi.value[j]*digamma(data_alpha),1) \
+            + np.sum((1-pi.value[j])*digamma(data_beta),1) \
+            - np.sum(digamma(data_x),1)
 
-            f = pi.value[j]**2 * polygamma(1, data_alpha) \
-                + (1 - pi.value[j])**2 * polygamma(1, data_beta) \
-                - polygamma(1, data_x) + polygamma(1, x[j]) \
-                - pi.value[j]**2 * polygamma(1, pi.value[j] * x[j]) \
-                - (1 - pi.value[j])**2 * polygamma(1, (1 - pi.value[j]) * x[j])
-            hf += np.sum(f, 1)
+        hf = hf + np.sum(pi.value[j]**2 * polygamma(1,data_alpha),1) \
+            + np.sum((1 - pi.value[j])**2 * polygamma(1,data_beta),1) \
+            - np.sum(polygamma(1,data_x),1)
 
-        Df[j] = -1 * np.sum(zeta.estim[:,1] * df)
-        hess[j] = -1 * np.sum(zeta.estim[:,1] * hf)
-
-    F = -1. * np.sum(zeta.estim[:,1] * func)
+    Df[0] = -1 * (np.sum(zeta.estim[:,1] * df) + zetaestim * dff)
+    hess[0] = -1 * (np.sum(zeta.estim[:,1] * hf) + zetaestim * hff)
+    F = -1. * (np.sum(zeta.estim[:,1] * func) + zetaestim * ffunc)
     Hf = np.diag(hess)
 
     return F, Df, Hf
@@ -508,6 +545,9 @@ cdef class Alpha:
 
         self.R = R
         self.estim = np.random.rand(self.R,2)*10
+
+    def __reduce__(self):
+        return (rebuild_Alpha, (self.R,self.estim))
 
     def update(self, Zeta zeta, Omega omega):
         """Update the estimates of parameter `alpha` in the model.
@@ -539,16 +579,22 @@ cdef class Alpha:
             print "Inf in Alpha"
             raise ValueError
 
-cdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
+def rebuild_Alpha(R, estim):
+
+    alpha = Alpha(R)
+    alpha.estim = estim
+    return alpha
+
+cpdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
     """Computes part of the likelihood function that has
     terms containing `alpha`, and its gradient
     """
 
     cdef long r
-    cdef double f
+    cdef double f, func
     cdef Zeta zeta
     cdef Omega omega
-    cdef np.ndarray df, Df, constant, zetaestim, func, xzeta
+    cdef np.ndarray df, Df, constant, zetaestim, xzeta
 
     zeta = args['zeta']
     omega = args['omega']
@@ -570,16 +616,16 @@ cdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args
 
     return f, Df
 
-cdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args):
+cpdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args):
     """Computes part of the likelihood function that has
     terms containing `alpha`, and its gradient and hessian
     """
 
     cdef long r
-    cdef double f
+    cdef double f, func
     cdef Zeta zeta
     cdef Omega omega
-    cdef np.ndarray df, Df, hf, Hf, constant, zetaestim, func, xzeta
+    cdef np.ndarray df, Df, hf, Hf, constant, zetaestim, xzeta
 
     zeta = args['zeta']
     omega = args['omega']
@@ -599,8 +645,8 @@ cdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, d
         hess[2*r:2*r+2] = np.sum(polygamma(1, xzeta) * zeta.estim, 0) \
             - polygamma(1, x[2*r:2*r+2]) * zetaestim
 
-    f = -1.*func
-    Df = -1. * df       
+    f = -1. * func
+    Df = -1. * df
     Hf = -1. * np.diag(hess)
 
     return f, Df, Hf
@@ -624,6 +670,9 @@ cdef class Omega:
         self.estim = np.random.rand(self.R,2)
         self.estim[:,1] = self.estim[:,1]/100
 
+    def __reduce__(self):
+        return (rebuild_Omega, (self.R,self.estim))
+
     cdef update(self, Zeta zeta, Alpha alpha):
         """Update the estimates of parameter `omega` in the model.
         """
@@ -643,6 +692,11 @@ cdef class Omega:
             print "Inf in Omega"
             raise ValueError
 
+def rebuild_Omega(R, estim):
+
+    omega = Omega(R)
+    omega.estim = estim
+    return omega
 
 cdef class Beta:
     """
@@ -657,10 +711,13 @@ cdef class Beta:
 
     """
 
-    def __cinit__(self, np.ndarray[np.float64_t, ndim=2] scores):
+    def __cinit__(self, long S):
     
-        self.S = scores.shape[1]
+        self.S = S
         self.estim = np.random.rand(self.S)
+
+    def __reduce__(self):
+        return (rebuild_Beta, (self.S,self.estim))
 
     def update(self, np.ndarray[np.float64_t, ndim=2] scores, Zeta zeta):
         """Update the estimates of parameter `beta` in the model.
@@ -678,7 +735,13 @@ cdef class Beta:
             print "Inf in Beta"
             raise ValueError
 
-cdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
+def rebuild_Beta(S, estim):
+
+    beta = Beta(S)
+    beta.estim = estim
+    return beta
+
+cpdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args):
     """Computes part of the likelihood function that has
     terms containing `beta`, and its gradient.
     """
@@ -695,7 +758,7 @@ cdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
     
     return f, Df
 
-cdef tuple beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args):
+cpdef tuple beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args):
     """Computes part of the likelihood function that has
     terms containing `beta`, and its gradient and hessian.
     """
@@ -781,36 +844,18 @@ def optimizer(np.ndarray[np.float64_t, ndim=1] xo, function_gradient, function_g
             return cvx.matrix(f), cvx.matrix(Df), cvx.matrix(Hf)
 
     # warm start for the optimization
-    optimized = False
     V = xo.size
     x_init = xo.reshape(V,1)
 
-    while not optimized:
+    # call the optimization subroutine in cvxopt
+    if args.has_key('G'):
+        # call a constrained nonlinear solver
+        solution = solvers.cp(F, G=cvx.matrix(args['G']), h=cvx.matrix(args['h']))
+    else:
+        # call an unconstrained nonlinear solver
+        solution = solvers.cp(F)
 
-        try:
-
-            # call the optimization subroutine in cvxopt
-            if args.has_key('G'):
-                # call a constrained nonlinear solver
-                solution = solvers.cp(F, G=cvx.matrix(args['G']), h=cvx.matrix(args['h']))
-            else:
-                # call an unconstrained nonlinear solver
-                solution = solvers.cp(F)
-
-            # check if optimal value has been reached; 
-            # if not, re-optimize with a cold start
-            if solution['status']=='optimal':
-                optimized = True
-                x_final = np.array(solution['x']).ravel()
-            else:
-                # cold start
-                x_init = np.random.rand(V,1)
-
-        except ValueError:
-
-            # if any parameter becomes Inf or Nan during optimization,
-            # re-optimize with a cold start
-            x_init = np.random.rand(V,1)
+    x_final = np.array(solution['x']).ravel()
 
     return x_final
 
@@ -841,30 +886,31 @@ cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, T
     """
 
     cdef long j, r
+    cdef np.ndarray valueA, valueB
     cdef Data lhood_bound, lhood_unbound
 
     lhood_bound = Data()
     lhood_unbound = Data()
 
     for j from 0 <= j < data.J:
-        value = np.sum(data.value[j],0)
-        total = np.sum(data.total[j],0)
+        valueA = np.sum(data.valueA[j],0)
+        valueB = np.sum(data.valueB[j],0)
         
-        lhood_bound.value[j] = np.sum([gammaln(data.value[j][r] + pi.value[j] * tau.estim[j]) \
-            + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * tau.estim[j]) \
+        lhood_bound.valueA[j] = np.sum([gammaln(data.valueA[j][r] + pi.value[j] * tau.estim[j]) \
+            + gammaln(data.valueB[j][r] + (1 - pi.value[j]) * tau.estim[j]) \
             - gammaln(data.total[j][r] + tau.estim[j]) + gammaln(tau.estim[j]) \
             - gammaln(pi.value[j] * tau.estim[j]) - gammaln((1 - pi.value[j]) * tau.estim[j]) \
             for r in xrange(data.R)],0)
 
         if model in ['msCentipede','msCentipede_flexbgmean']:
             
-            lhood_unbound.value[j] = value * nplog(pi_null.value[j]) \
-                + (total - value) * nplog(1 - pi_null.value[j])
+            lhood_unbound.valueA[j] = valueA * nplog(pi_null.value[j]) \
+                + valueB * nplog(1 - pi_null.value[j])
     
         elif model=='msCentipede_flexbg':
             
-            lhood_unbound.value[j] = np.sum([gammaln(data.value[j][r] + pi_null.value[j] * tau_null.estim[j]) \
-                + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi_null.value[j]) * tau_null.estim[j]) \
+            lhood_unbound.valueA[j] = np.sum([gammaln(data.valueA[j][r] + pi_null.value[j] * tau_null.estim[j]) \
+                + gammaln(data.valueB[j][r] + (1 - pi_null.value[j]) * tau_null.estim[j]) \
                 - gammaln(data.total[j][r] + tau_null.estim[j]) + gammaln(tau_null.estim[j]) \
                 - gammaln(pi_null.value[j] * tau_null.estim[j]) - gammaln((1 - pi_null.value[j]) * tau_null.estim[j]) \
                 for r in xrange(data.R)],0)
@@ -927,7 +973,7 @@ cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
     footprint = np.zeros((data.N,1),dtype=float)
     for j from 0 <= j < data.J:
-        footprint += insum(lhoodA.value[j],[1])
+        footprint += insum(lhoodA.valueA[j],[1])
 
     P_1 = footprint + insum(gammaln(zeta.total + alpha.estim[:,1]) - gammaln(alpha.estim[:,1]) \
         + alpha.estim[:,1] * nplog(omega.estim[:,1]) + zeta.total * nplog(1 - omega.estim[:,1]), [1])
@@ -936,14 +982,14 @@ cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
     null = np.zeros((data.N,1), dtype=float)
     for j from 0 <= j < data.J:
-        null += insum(lhoodB.value[j],[1])
+        null += insum(lhoodB.valueA[j],[1])
 
     P_0 = null + insum(gammaln(zeta.total + alpha.estim[:,0]) - gammaln(alpha.estim[:,0]) \
         + alpha.estim[:,0] * nplog(omega.estim[:,0]) + zeta.total * nplog(1 - omega.estim[:,0]), [1])
     P_0[P_0==np.inf] = MAX
     P_0[P_0==-np.inf] = -MAX
 
-    LL = P_0 * zeta.estim[:,:1] + insum(P_1 * zeta.estim[:,1:],[1]) + apriori * (1 - zeta.estim[:,:1]) \
+    LL = P_0 * zeta.estim[:,:1] + P_1 * zeta.estim[:,1:] + apriori * (1 - zeta.estim[:,:1]) \
         - nplog(1 + np.exp(apriori)) - insum(zeta.estim * nplog(zeta.estim),[1])
  
     L = LL.sum() / data.N
@@ -1011,26 +1057,26 @@ cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
     # update multi-scale parameters
     starttime = time.time()
-    tau.update(data, zeta, pi)
-    print "tau update in %.3f secs"%(time.time()-starttime)
-
-    starttime = time.time()
     pi.update(data, zeta, tau)
     print "p_jk update in %.3f secs"%(time.time()-starttime)
 
-    # update negative binomial parameters
     starttime = time.time()
-    omega.update(zeta, alpha)
-    print "omega update in %.3f secs"%(time.time()-starttime)
+    tau.update(data, zeta, pi)
+    print "tau update in %.3f secs"%(time.time()-starttime)
 
-    starttime = time.time()
+    # update negative binomial parameters
+    #starttime = time.time()
+    omega.update(zeta, alpha)
+    #print "omega update in %.3f secs"%(time.time()-starttime)
+
+    #starttime = time.time()
     alpha.update(zeta, omega)
-    print "alpha update in %.3f secs"%(time.time()-starttime)
+    #print "alpha update in %.3f secs"%(time.time()-starttime)
 
     # update prior parameters
-    starttime = time.time()
+    #starttime = time.time()
     beta.update(scores, zeta)
-    print "beta update in %.3f secs"%(time.time()-starttime)
+    #print "beta update in %.3f secs"%(time.time()-starttime)
 
 
 cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
@@ -1192,13 +1238,16 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     data.transform_to_multiscale(reads)
     data_null = Data()
     data_null.transform_to_multiscale(background)
-    scores = np.hstack((np.ones((data.N,1), dtype=float), scores))
     del reads
+
+    # transform matrix of PWM scores and other prior information
+    scores = np.hstack((np.ones((data.N,1), dtype=float), scores))
+    S = scores.shape[1]
 
     # set background model
     pi_null = Pi(data_null.J)
     for j in xrange(pi_null.J):
-        pi_null.value[j] = np.sum(np.sum(data_null.value[j],0),0) / np.sum(np.sum(data_null.total[j],0),0).astype('float')
+        pi_null.value[j] = np.sum(np.sum(data_null.valueA[j],0),0) / np.sum(np.sum(data_null.total[j],0),0).astype('float')
     
     tau_null = Tau(data_null.J)
     if model=='msCentipede_flexbg':
@@ -1225,78 +1274,73 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     runlog = ['Number of sites = %d'%data.N]
     while restart<restarts:
 
-        try:
-            totaltime = time.time()
-            print "Restart %d ..."%(restart+1)
+        totaltime = time.time()
+        print "Restart %d ..."%(restart+1)
 
-            # initialize multi-scale model parameters
-            pi = Pi(data.J)
-            tau = Tau(data.J)
+        # initialize multi-scale model parameters
+        pi = Pi(data.J)
+        tau = Tau(data.J)
 
-            # initialize negative binomial parameters
-            alpha = Alpha(data.R)
-            omega = Omega(data.R)
+        # initialize negative binomial parameters
+        alpha = Alpha(data.R)
+        omega = Omega(data.R)
 
-            # initialize prior parameters
-            beta = Beta(scores)
+        # initialize prior parameters
+        beta = Beta(S)
 
-            # initialize posterior over latent variables
-            zeta = Zeta(totalreads, data.N, False)
-            for j in xrange(pi.J):
-                pi.value[j] = np.sum(data.value[j][0] * zeta.estim[:,1:],0) \
-                    / np.sum(data.total[j][0] * zeta.estim[:,1:],0).astype('float')
-                pi.value[j][pi.value[j]<1e-10] = 1e-10
-                pi.value[j][pi.value[j]>1-1e-10] = 1-1e-10
+        # initialize posterior over latent variables
+        zeta = Zeta(totalreads, data.N, False)
+        for j in xrange(pi.J):
+            pi.value[j] = np.sum(data.valueA[j][0] * zeta.estim[:,1:],0) \
+                / np.sum(data.total[j][0] * zeta.estim[:,1:],0).astype('float')
+            mask = pi.value[j]>0
+            pi.value[j][~mask] = pi.value[j][mask].min()
+            mask = pi.value[j]<1
+            pi.value[j][~mask] = pi.value[j][mask].max()
+            minj = 1./min([pi.value[j].min(), (1-pi.value[j]).min()])
+            if minj<2:
+                minj = 2.
+            tau.estim[j] = minj+10*np.random.rand()
 
-            # initial log likelihood of the model
-            Loglike = likelihood(data, scores, zeta, pi, tau, \
+        # initial log likelihood of the model
+        Loglike = likelihood(data, scores, zeta, pi, tau, \
+                alpha, beta, omega, pi_null, tau_null, model)
+        print Loglike
+
+        tol = np.inf
+        iteration = 0
+
+        while np.abs(tol)>mintol:
+
+            itertime = time.time()
+            square_EM(data, scores, zeta, pi, tau, \
                     alpha, beta, omega, pi_null, tau_null, model)
-            print Loglike
 
-            tol = np.inf
-            iteration = 0
+            newLoglike = likelihood(data, scores, zeta, pi, tau, \
+                    alpha, beta, omega, pi_null, tau_null, model)
 
-            while np.abs(tol)>mintol:
+            tol = newLoglike - Loglike
+            Loglike = newLoglike
+            print "%d: log likelihood = %.7f, change in log likelihood = %.7f, iteration time = %.3f secs"%(iteration+1, Loglike, tol, time.time()-itertime)
+            iteration += 1
+        totaltime = (time.time()-totaltime)/60.
 
-                itertime = time.time()
-                EM(data, scores, zeta, pi, tau, \
-                        alpha, beta, omega, pi_null, tau_null, model)
-
-                newLoglike = likelihood(data, scores, zeta, pi, tau, \
-                        alpha, beta, omega, pi_null, tau_null, model)
-
-                tol = newLoglike - Loglike
-                Loglike = newLoglike
-                print "Iteration %d: log likelihood = %.7f, change in log likelihood = %.7f, iteration time = %.3f secs"%(iteration+1, Loglike, tol, time.time()-itertime)
-                iteration += 1
-            totaltime = (time.time()-totaltime)/60.
-
-            # test if mean cleavage rate at bound sites is greater than at 
-            # unbound sites, for each replicate; avoids local optima issues.
-            negbinmeans = alpha.estim * (1-omega.estim)/omega.estim
-            if np.any(negbinmeans[:,0]<negbinmeans[:,1]):
-                restart += 1
-                log = "%d. Log likelihood (per site) = %.3f (Completed in %.3f minutes)"%(restart,Loglike,totaltime)
-                runlog.append(log)
-                # choose these parameter estimates, if the likelihood is greater.
-                if Loglike>maxLoglike:
-                    maxLoglikeres = Loglike
-                    if model in ['msCentipede','msCentipede_flexbgmean']:
-                        footprint_model = (pi, tau, pi_null)
-                    elif model=='msCentipede_flexbg':
-                        footprint_model = (pi, tau, pi_null, tau_null)
-                    count_model = (alpha, omega)
-                    prior = beta
-
-        except ValueError:
-
-            print "encountered an invalid value"
-            if err<5:
-                print "re-initializing learning for Restart %d ... %d"%(restart,err)
-                err += 1
-            else:
-                print "Error in learning model parameters. Please ensure the inputs are all valid"
-                sys.exit(1)
+        # test if mean cleavage rate at bound sites is greater than at 
+        # unbound sites, for each replicate; avoids local optima issues.
+        negbinmeans = alpha.estim * (1-omega.estim)/omega.estim
+        if np.any(negbinmeans[:,0]<negbinmeans[:,1]):
+            restart += 1
+            log = "%d. Log likelihood (per site) = %.3f (Completed in %.3f minutes)"%(restart,Loglike,totaltime)
+            runlog.append(log)
+            # choose these parameter estimates, if the likelihood is greater.
+            if Loglike>maxLoglike:
+                maxLoglikeres = Loglike
+                if model in ['msCentipede','msCentipede_flexbgmean']:
+                    footprint_model = (pi, tau, pi_null)
+                elif model=='msCentipede_flexbg':
+                    footprint_model = (pi, tau, pi_null, tau_null)
+                count_model = (alpha, omega)
+                prior = beta
 
     return footprint_model, count_model, prior, runlog
 
@@ -1363,7 +1407,7 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
     # setting background model
     pi_null = footprint[2]
     for j in xrange(pi_null.J):
-        pi_null.value[j] = np.sum(np.sum(data_null.value[j],0),0) \
+        pi_null.value[j] = np.sum(np.sum(data_null.valueA[j],0),0) \
             / np.sum(np.sum(data_null.total[j],0),0).astype('float')
     tau_null = None
 
