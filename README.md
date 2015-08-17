@@ -1,7 +1,7 @@
 # msCentipede
 
 **msCentipede** is an algorithm for accurately inferring transcription factor binding sites using chromatin
-accessibility data (Dnase-seq, ATAC-seq) and is written in Python2.x. 
+accessibility data (Dnase-seq, ATAC-seq) and is written in Python2.x and Cython. 
 The [hierarchical multiscale model underlying msCentipede]() identifies factor-bound genomic sites
 by using patterns in DNA cleavage resulting from the action of nucleases in open chromatin regions 
 (regions typically bound by transcription factors). msCentipede, 
@@ -41,6 +41,12 @@ To retrieve the latest code updates, you can do the following:
     cd ~/proj/msCentipede
     git fetch
     git merge origin/master
+
+Since the algorithm is written in Cython, msCentipede will have to be compiled into a shared object in the following way, before it can be executed.
+
+    python setup.py build_ext --inplace
+
+This step will generate a number of warning messages that can be ignored. If there are no error messages, the compilation step should produce two files `mscentipede.c` and `mscentipede.so`.
 
 ## Executing the code
 
