@@ -11,7 +11,6 @@ import sys, time, math, pdb
 # suppress optimizer output
 solvers.options['show_progress'] = False
 solvers.options['maxiters'] = 20
-np.random.seed(10)
 
 # defining some constants
 EPS = np.finfo(np.double).tiny
@@ -259,12 +258,6 @@ cdef class Pi:
 
             # store optimum in data structure
             self.value[j] = x_final
-
-    def avoid_edges(self):
-
-        for j in xrange(self.J):
-            self.value[j][self.value[j]<1e-10] = 1e-10
-            self.value[j][self.value[j]>1-1e-10] = 1-1e-10
 
 def rebuild_Pi(J, value):
 
@@ -1056,13 +1049,13 @@ cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
             alpha, beta, omega, pi_null, tau_null, model)
 
     # update multi-scale parameters
-    starttime = time.time()
+    #starttime = time.time()
     pi.update(data, zeta, tau)
-    print "p_jk update in %.3f secs"%(time.time()-starttime)
+    #print "p_jk update in %.3f secs"%(time.time()-starttime)
 
-    starttime = time.time()
+    #starttime = time.time()
     tau.update(data, zeta, pi)
-    print "tau update in %.3f secs"%(time.time()-starttime)
+    #print "tau update in %.3f secs"%(time.time()-starttime)
 
     # update negative binomial parameters
     #starttime = time.time()
@@ -1184,7 +1177,7 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     np.ndarray[np.float64_t, ndim=2] totalreads, \
     np.ndarray[np.float64_t, ndim=2] scores, \
     np.ndarray[np.float64_t, ndim=3] background, \
-    str model, long restarts, double mintol):
+    str model, str log_file, long restarts, double mintol):
     """Learn the model parameters by running an EM algorithm till convergence.
     Return the optimal parameter estimates from a number of EM results starting 
     from random restarts.
@@ -1233,6 +1226,12 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     cdef Tau tau, tau_null
     cdef Zeta zeta, zeta_null
 
+    log = "transforming data into multiscale representation ..."
+    log_handle = open(log_file,'a')
+    log_handle.write(log)
+    log_handle.close()
+    print log
+
     # transform data into multiscale representation
     data = Data()
     data.transform_to_multiscale(reads)
@@ -1244,6 +1243,10 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     scores = np.hstack((np.ones((data.N,1), dtype=float), scores))
     S = scores.shape[1]
 
+    log_handle = open(log_file,'a')
+    log_handle.write("done\n")
+    log_handle.close()
+
     # set background model
     pi_null = Pi(data_null.J)
     for j in xrange(pi_null.J):
@@ -1251,6 +1254,12 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     
     tau_null = Tau(data_null.J)
     if model=='msCentipede_flexbg':
+
+        log = "learning a flexible background model ..."
+        log_handle = open(log_file,'a')
+        log_handle.write(log)
+        log_handle.close()
+        print log
 
         zeta_null = Zeta(background.sum(1), data_null.N, False)
         zeta_null.estim[:,1] = 1
@@ -1268,14 +1277,21 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
 
             change = np.abs(oldtau-tau_null.estim).sum() / tau_null.J
 
+        log_handle = open(log_file,'a')
+        log_handle.write("done\n")
+        log_handle.close()
+
     maxLoglike = -np.inf
     restart = 0
     err = 1
-    runlog = ['Number of sites = %d'%data.N]
     while restart<restarts:
 
         totaltime = time.time()
-        print "Restart %d ..."%(restart+1)
+        log = "starting model estimation (restart %d)"%(restart+1)
+        log_handle = open(log_file,'a')
+        log_handle.write(log+'\n')
+        log_handle.close()
+        print log
 
         # initialize multi-scale model parameters
         pi = Pi(data.J)
@@ -1305,7 +1321,12 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
         # initial log likelihood of the model
         Loglike = likelihood(data, scores, zeta, pi, tau, \
                 alpha, beta, omega, pi_null, tau_null, model)
-        print Loglike
+
+        log = "initial log likelihood = %.2e"%Loglike
+        log_handle = open(log_file,'a')
+        log_handle.write(log+'\n')
+        log_handle.close()
+        print log
 
         tol = np.inf
         iteration = 0
@@ -1321,7 +1342,11 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
 
             tol = newLoglike - Loglike
             Loglike = newLoglike
-            print "%d: log likelihood = %.7f, change in log likelihood = %.7f, iteration time = %.3f secs"%(iteration+1, Loglike, tol, time.time()-itertime)
+            log = "iteration %d: log likelihood = %.2e, change in log likelihood = %.2e, iteration time = %.3f secs"%(iteration+1, Loglike, tol, time.time()-itertime)
+            log_handle = open(log_file,'a')
+            log_handle.write(log+'\n')
+            log_handle.close()
+            print log
             iteration += 1
         totaltime = (time.time()-totaltime)/60.
 
@@ -1330,8 +1355,6 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
         negbinmeans = alpha.estim * (1-omega.estim)/omega.estim
         if np.any(negbinmeans[:,0]<negbinmeans[:,1]):
             restart += 1
-            log = "%d. Log likelihood (per site) = %.3f (Completed in %.3f minutes)"%(restart,Loglike,totaltime)
-            runlog.append(log)
             # choose these parameter estimates, if the likelihood is greater.
             if Loglike>maxLoglike:
                 maxLoglikeres = Loglike
@@ -1342,7 +1365,7 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
                 count_model = (alpha, omega)
                 prior = beta
 
-    return footprint_model, count_model, prior, runlog
+    return footprint_model, count_model, prior
 
 
 def infer_binding_posterior(reads, totalreads, scores, background, footprint, negbinparams, prior, model):

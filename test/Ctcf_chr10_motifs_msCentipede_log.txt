@@ -1,5 +1,16 @@
 model = msCentipede
-Window size = 128
-Motif file: test/Ctcf_chr10_motifs.txt.gz
-Number of sites = 471
-1. Log likelihood (per site) = -71.612 (Completed in 30.010 minutes)
+window size = 128
+motif file: test/Ctcf_chr10_motifs.txt.gz
+bam files: test/Gm12878_chr10_Rep1.sort.bam,test/Gm12878_chr10_Rep2.sort.bam
+loading motifs ... done
+num of motif sites = 471
+loading read counts ... done
+transforming data into multiscale representation ...done
+starting model estimation (restart 1)
+initial log likelihood = -8.96e+01
+iteration 1: log likelihood = -7.20e+01, change in log likelihood = 1.76e+01, iteration time = 103.431 secs
+iteration 2: log likelihood = -7.16e+01, change in log likelihood = 3.27e-01, iteration time = 89.062 secs
+iteration 3: log likelihood = -7.16e+01, change in log likelihood = 2.23e-02, iteration time = 98.175 secs
+iteration 4: log likelihood = -7.16e+01, change in log likelihood = -1.78e-03, iteration time = 100.483 secs
+iteration 5: log likelihood = -7.16e+01, change in log likelihood = 3.64e-03, iteration time = 125.718 secs
+iteration 6: log likelihood = -7.16e+01, change in log likelihood = -5.16e-05, iteration time = 122.004 secs

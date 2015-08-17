@@ -1,58 +1,99 @@
 import numpy as np
 import cPickle
 import load_data
-#import mscentipedepy as mscentipede
 import mscentipede
 import argparse
-import time, pdb
+import warnings
+import time
+
+# ignore warnings with these expressions
+warnings.filterwarnings('ignore', '.*overflow encountered.*',)
+warnings.filterwarnings('ignore', '.*divide by zero.*',)
+warnings.filterwarnings('ignore', '.*invalid value.*',)
 
 def learn_model(options):
 
+    # write algorithm parameters
+    log_handle = open(options.log_file,'w')
+    log_handle.write('model = %s\n'%options.model)
+    log_handle.write('window size = %d\n'%options.window)
+    log_handle.write('motif file: %s\n'%options.motif_file)
+    log_handle.write('bam files: %s\n'%(','.join([file for file in options.bam_files])))
+    log_handle.close()
+
     # load motif sites
+    log = "loading motifs ... "
+    handle = open(options.log_file,'a')
+    handle.write(log)
+    handle.close()
+    print log
+
     motif_handle = load_data.ZipFile(options.motif_file)
     locations = motif_handle.read()
     motif_handle.close()
     if np.any([len(loc)<5 for loc in locations]):
-        print "Error: ensure all rows in motif instance file contain same number of columns"
+        print "error: ensure all rows in motif instance file contain same number of columns"
         sys.exit(1)
 
     locations = locations[:options.batch]
     try:
         scores = np.array([loc[4:] for loc in locations]).astype('float')
     except ValueError:
-        print "Error: column 5 and higher should all be numeric values."
+        print "error: column 5 and higher should all be numeric values."
         sys.exit(1)
 
-    # load read data
+    handle = open(options.log_file,'a')
+    handle.write("done\n")
+    handle.write("num of motif sites = %d\n"%(scores.shape[0]))
+    handle.close()
+    print "num of motif sites = %d"%(scores.shape[0])
+
+    # load read data within specified window size
+    log = "loading read counts ... "
+    handle = open(options.log_file,'a')
+    handle.write(log)
+    handle.close()
+    print log
+
     bam_handles = [load_data.BamFile(bam_file, options.protocol) for bam_file in options.bam_files]
     count_data = np.array([bam_handle.get_read_counts(locations, width=options.window) \
         for bam_handle in bam_handles])
     ig = [handle.close() for handle in bam_handles]   
     total_counts = np.sum(count_data, 2).T
-
-    # extract reads within specified window size
     counts = np.array([count.T for count in count_data]).T
+
+    handle = open(options.log_file,'a')
+    handle.write("done\n")
+    handle.close()
 
     # specify background
     if options.model=='msCentipede':
         background_counts = np.ones((1,2*options.window,1), dtype=float)
     elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
+        log = "Loading naked-DNA read counts ... "
+        handle = open(options.log_file,'a')
+        handle.write(log)
+        handle.close()
+        print log
+
         bam_handle = load_data.BamFile(options.bam_file_genomicdna, options.protocol)
         bg_count_data = np.array([bam_handle.get_read_counts(locations, width=options.window)])
         bam_handle.close()
         background_counts = np.array([count.T for count in bg_count_data]).T
 
-    # estimate model parameters
-    footprint_model, count_model, prior, runlog = mscentipede.estimate_optimal_model(counts, total_counts, scores, \
-        background_counts, options.model, options.restarts, options.mintol)
+        handle = open(options.log_file,'a')
+        handle.write("done\n")
+        handle.close()
 
-    # write log file
-    runlog.insert(0,'Motif file: %s'%options.motif_file)
-    runlog.insert(0,'Window size = %d'%options.window)
-    runlog.insert(0,'model = %s'%options.model)
-    log_handle = open(options.log_file, 'w')
-    log_handle.write('\n'.join(runlog)+'\n')
-    log_handle.close()
+    # estimate model parameters
+    footprint_model, count_model, prior = mscentipede.estimate_optimal_model(counts, total_counts, scores, \
+        background_counts, options.model, options.log_file, options.restarts, options.mintol)
+
+    log = "writing model to file ... "
+    handle = open(options.log_file,'a')
+    handle.write(log)
+    handle.close()
+    print log
 
     # save model parameter estimates
     model_handle = open(options.model_file, 'w')
@@ -61,6 +102,9 @@ def learn_model(options):
     cPickle.Pickler(model_handle,protocol=2).dump(prior)
     model_handle.close()
 
+    handle = open(options.log_file,'a')
+    handle.write("done\n")
+    handle.close()
 
 def infer_binding(options):
 
@@ -73,7 +117,7 @@ def infer_binding(options):
 
     # check if specified window size matches window size in model parameters
     if 2**footprint_model[0].J!=options.window*2:
-        print "Window size in model (%d bp) different from specified window size (%d bp). Using size in model ...\n"%(2**footprint_model[0].J/2, options.window)
+        print "Window size in model (%d bp) different from specified window size (%d bp). Using size in model ... \n"%(2**footprint_model[0].J/2, options.window)
         options.window = 2**footprint_model[0].J/2
 
     # load motifs
