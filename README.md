@@ -8,7 +8,7 @@ by using patterns in DNA cleavage resulting from the action of nucleases in open
 a generalization of the [CENTIPEDE](http://centipede.uchicago.edu) model, accounts for 
 heterogeneity in the DNA cleavage patterns around sites bound by transcription factors.
 
-This repo contains set of scripts to load the data and run the algorithm. This document summarizes 
+This code repository contains set of scripts to load the data and run the algorithm. The current document summarizes 
 how to download and setup this software package and provides instructions on how to run the software
 on a test dataset of motif instances and some publicly available DNase-seq data.
 
@@ -17,6 +17,7 @@ on a test dataset of motif instances and some publicly available DNase-seq data.
 msCentipede depends on 
 + [Numpy](http://www.numpy.org/)
 + [Scipy](http://www.scipy.org/)
++ [Cython](http://cython.org/)
 + [Cvxopt](http://www.cvxopt.org/)
 + [Pysam](https://github.com/pysam-developers/pysam)
 
@@ -113,7 +114,7 @@ The gzipped file of motif instances should have the following format.
 
 In the above format, positions are 0-based. *Start* corresponds to the first base of the core motif for *+* strand motif instances and the last base of the core motif for *-* strand motif instances.
 
-When multiple library / sample replicates are available, the bam files for the replicates can be provided as separate files, separated by whitespace. Bam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. However, bam files from different protocols or drastically different read lengths are best not mixed since protocol or read length differences could mask biologically meaningful heterogeneity that is relevant in identifying transcription factor binding sites.
+When multiple library / sample replicates are available, the bam files for the replicates can be provided as separate files, separated by whitespace. Bam files containing single-end reads and paired-end reads can be mixed since msCentipede currently does not model the fragment size distribution. However, bam files from different protocols or drastically different read lengths are best not mixed since protocol or read length differences could mask biologically meaningful heterogeneity that is relevant in identifying transcription factor binding sites. If the data were generated using an ATAC-seq protocol, the location of transpositions can be automatically identified from the read mapping positions by passing the flag `--protocol=ATAC_seq`.
 
 ### Learning model parameters
 
@@ -121,7 +122,7 @@ The model parameters can be learned by passing the following flags.
 
     python call_binding.py --task learn test/CTCF_chr10_motifs.txt.gz test/Gm12878_Rep1.bam test/Gm12878_Rep2.bam
 
-This will run msCentipede with all other default values and output a log file `test/CTCF_chr10_motifs_msCentipede_log.txt` and a file `test/CTCF_chr10_motifs_msCentipede_model_parameters.pkl` in which the model parameter objects are stored. This is a standard pickle file that can be viewed using the `cPickle` module.
+This will run msCentipede with all other default values and output a log file `test/CTCF_chr10_motifs_msCentipede_log.txt` and a file `test/CTCF_chr10_motifs_msCentipede_model_parameters.pkl` in which the model parameter objects are stored. This is a standard Python pickle file that can be viewed using the `cPickle` module.
 
 ### Inferring factor binding
 
