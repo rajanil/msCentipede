@@ -68,7 +68,10 @@ def learn_model(options):
 
     # specify background
     if options.model=='msCentipede':
-        background_counts = np.ones((1,2*options.window,1), dtype=float)
+        if options.protocol=='DNase_seq':
+            background_counts = np.ones((1,2*options.window,1), dtype=float)
+        elif options.protocol=='ATAC_seq':
+            background_counts = np.ones((1,options.window,1), dtype=float)
     elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
         log = "Loading naked-DNA read counts ... "
         handle = open(options.log_file,'a')
@@ -116,9 +119,14 @@ def infer_binding(options):
     handle.close()
 
     # check if specified window size matches window size in model parameters
-    if 2**footprint_model[0].J!=options.window*2:
-        print "Window size in model (%d bp) different from specified window size (%d bp). Using size in model ... \n"%(2**footprint_model[0].J/2, options.window)
-        options.window = 2**footprint_model[0].J/2
+    if options.protocol=="DNase_seq":
+        if 2**footprint_model[0].J!=options.window*2:
+            print "Window size in model (%d bp) different from specified window size (%d bp). Using size in model ... \n"%(2**footprint_model[0].J/2, options.window)
+            options.window = 2**footprint_model[0].J/2
+    elif options.protocol=="ATAC_seq":
+        if 2**footprint_model[0].J!=options.window:
+            print "Window size in model (%d bp) different from specified window size (%d bp). Using size in model ... \n"%(2**footprint_model[0].J, options.window)
+            options.window = 2**footprint_model[0].J
 
     # load motifs
     motif_handle = load_data.ZipFile(options.motif_file)
@@ -128,7 +136,10 @@ def infer_binding(options):
 
     # open background data handles
     if options.model=='msCentipede':
-        background_counts = np.ones((1,2*options.window,1), dtype=float)
+        if options.protocol=='DNase_seq':
+            background_counts = np.ones((1,2*options.window,1), dtype=float)
+        elif options.protocol=='ATAC_seq':
+            background_counts = np.ones((1,options.window,1), dtype=float)
     elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
         bg_handle = load_data.BamFile(options.bam_file_genomicdna, options.protocol)
 

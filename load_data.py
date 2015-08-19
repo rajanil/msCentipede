@@ -79,6 +79,8 @@ class BamFile():
 
     	self._handle = pysam.Samfile(filename, "rb")
         self._protocol = protocol
+        self._ref_lengths = dict([(r,l) \
+            for r,l in zip(self._handle.references,self._handle.lengths)])
 
     def get_read_counts(self, locations, width=200):
         """Get the number of sequencing reads mapped to
@@ -108,8 +110,8 @@ class BamFile():
                 center = location[1]
             else:
                 center = location[2]
-            left = center-width/2
-            right = center+width/2
+            left = max([1,center-width/2])
+            right = min([center+width/2, self._ref_lengths[chrom]])
 
             # fetch all reads overlapping this genomic location
             sam_iter = self._handle.fetch(reference=chrom, start=left, end=right)
