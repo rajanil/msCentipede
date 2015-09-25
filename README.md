@@ -2,7 +2,7 @@
 
 **msCentipede** is an algorithm for accurately inferring transcription factor binding sites using chromatin
 accessibility data (Dnase-seq, ATAC-seq) and is written in Python2.x and Cython. 
-The [hierarchical multiscale model underlying msCentipede]() identifies factor-bound genomic sites
+The [hierarchical multiscale model underlying msCentipede](http://journals.plos.org/plosone/article?id=10.1371/journal.pone.0138030) identifies factor-bound genomic sites
 by using patterns in DNA cleavage resulting from the action of nucleases in open chromatin regions 
 (regions typically bound by transcription factors). msCentipede, 
 a generalization of the [CENTIPEDE](http://centipede.uchicago.edu) model, accounts for 
@@ -102,7 +102,7 @@ options that need to be passed to the script, you can do the following:
 
 We will now describe in detail how to use this software using an example dataset of CTCF motif instances on chromosome 10 in hg19 coordinates is provided in `test/CTCF_chr10_motifs.txt.gz`. DNase-seq data for the GM12878 cell line (bam and bai files) can be downloaded from ENCODE to `test/` . In the following instructions, we assume the data files are named [Gm12878_Rep1.bam](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwDnase/wgEncodeUwDnaseGm12878AlnRep1.bam) and [Gm12878_Rep2.bam](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwDnase/wgEncodeUwDnaseGm12878AlnRep2.bam).
 
-The software is designed to run in two separate steps. In the first step, optimal values for the model parameters are estimated using a subset of all motif instances. In the second step, posterior probability of factor binding is inferred for all motif instances. Since accurate estimates of model parameters can be obtained using 5000-10000 motif instances, this enables efficient inference for those transcription factors that have orders of magnitude more motif instances genomewide. If more motif instances are available in the file than the value of the flag `--batch`, then `batch` number of motif instances that have the highest PWM score are used in learning model parameters.
+The software is designed to run in two separate steps. In the first step, optimal values for the model parameters are estimated using a subset of all motif instances. In the second step, posterior probability of factor binding is inferred for all motif instances. Since accurate estimates of model parameters can be obtained using 5000-10000 motif instances, this strategy enables efficient inference for those transcription factors that have orders of magnitude more motif instances genomewide. If more motif instances are available in the file than the value of the flag `--batch`, then `batch` number of motif instances that have the highest PWM score are used in learning model parameters.
 
 ### Key Inputs
 
@@ -138,9 +138,31 @@ The posterior log odds of binding for a set of motif instances can be computed b
 
 This will run msCentipede with all other default values and output a file `test/CTCF_chr10_motifs_msCentipede_binding_posterior.txt.gz`.
 
+### Plotting the factor-specific cleavage profile
+
+In order to check whether the algorithm could successfully learn a chromatin accessibility profile for a given set of motifs, we have provided a script to plot the shape of the inferred cleavage profile at factor bound sites.
+
+    python plot_accessibility_profile.py
+    
+    positional arguments
+     motif_file            name of a gzipped text file containing positional
+                            information and other attributes for motif instances
+                            of a transcription factor. columns of the file should
+                            be as follows. Chromosome Start End Strand PWM_Score
+                            [Attribute_1 Attribute_2 ...]. additional attributes
+                            are optional.
+    
+    optional arguments
+      --protocol {ATAC_seq,DNase_seq}
+                            specifies the chromatin accessibility protocol
+                            (default:DNase_seq)
+      --model {msCentipede,msCentipede_flexbg,msCentipede_flexbgmean}
+                            a different background cleavage profile will be shown
+                            depending on the model (default:msCentipede)
+
 ### Optional parameters
 
-Instead of the default file names, you can specify the file name to which the run log, model parameters and binding posterior odds will be written, using the flags `--log_file`, `--model_file` and `--posterior_file`, respectively.
+Instead of the default file names, you can specify the file name to which the run log, model parameters and binding posterior odds will be written, using the flags `--log_file`, `--model_file` and `--posterior_file`, respectively. For example, these flags allow using a previously learned model on a new set of motif sites for the same transcription factors. 
 
-The differences between the three models *msCentipede* , *msCentipede_flexbgmean* , and *msCentipede_flexbg* are specified in detail in the associated [publication](). If the model flag is specified to be *msCentipede_flexbgmean* or *msCentipede_flexbg*, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed, using the flag `--bam_file_genomicdna`.
+The differences between the three models *msCentipede* , *msCentipede_flexbgmean* , and *msCentipede_flexbg* are specified in detail in the associated [publication](http://journals.plos.org/plosone/article?id=10.1371/journal.pone.0138030). If the model flag is specified to be *msCentipede_flexbgmean* or *msCentipede_flexbg*, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed, using the flag `--bam_file_genomicdna`.
 
