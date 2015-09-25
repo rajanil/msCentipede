@@ -36,7 +36,7 @@
 
 <p><strong>msCentipede</strong> is an algorithm for accurately inferring transcription factor binding sites using chromatin
 accessibility data (Dnase-seq, ATAC-seq) and is written in Python2.x and Cython. 
-The <a href="">hierarchical multiscale model underlying msCentipede</a> identifies factor-bound genomic sites
+The <a href="http://journals.plos.org/plosone/article?id=10.1371/journal.pone.0138030">hierarchical multiscale model underlying msCentipede</a> identifies factor-bound genomic sites
 by using patterns in DNA cleavage resulting from the action of nucleases in open chromatin regions 
 (regions typically bound by transcription factors). msCentipede, 
 a generalization of the <a href="http://centipede.uchicago.edu">CENTIPEDE</a> model, accounts for 
@@ -194,9 +194,34 @@ chr10 15627426  15627443  -       20.39377594
 <p>This will run msCentipede with all other default values and output a file <code>test/CTCF_chr10_motifs_msCentipede_binding_posterior.txt.gz</code>.</p>
 
 <h3>
+<a id="plotting-the-factor-specific-cleavage-profile" class="anchor" href="#plotting-the-factor-specific-cleavage-profile" aria-hidden="true"><span class="octicon octicon-link"></span></a>Plotting the factor-specific cleavage profile</h3>
+
+<p>In order to check whether the algorithm could successfully learn a chromatin accessibility profile for a given set of motifs, we have provided a script to plot the shape of the inferred cleavage profile at factor bound sites.</p>
+
+<pre><code>$ python plot_accessibility_profile.py
+
+positional arguments:
+  motif_file            name of a gzipped text file containing positional
+                        information and other attributes for motif instances
+                        of a transcription factor. columns of the file should
+                        be as follows. Chromosome Start End Strand PWM_Score
+                        [Attribute_1 Attribute_2 ...]. additional attributes
+                        are optional.
+
+optional arguments:
+  --protocol {ATAC_seq,DNase_seq}
+                        specifies the chromatin accessibility protocol
+                        (default:DNase_seq)
+  --model {msCentipede,msCentipede_flexbg,msCentipede_flexbgmean}
+                        a different background cleavage profile will be shown
+                        depending on the model (default:msCentipede)
+
+</code></pre>
+
+<h3>
 <a id="optional-parameters" class="anchor" href="#optional-parameters" aria-hidden="true"><span class="octicon octicon-link"></span></a>Optional parameters</h3>
 
-<p>Instead of the default file names, you can specify the file name to which the run log, model parameters and binding posterior odds will be written, using the flags <code>--log_file</code>, <code>--model_file</code> and <code>--posterior_file</code>, respectively.</p>
+<p>Instead of the default file names, you can specify the file name to which the run log, model parameters and binding posterior odds will be written, using the flags <code>--log_file</code>, <code>--model_file</code> and <code>--posterior_file</code>, respectively. For example, these flags allow using a previously learned model on a new set of motif sites for the same transcription factors.</p>
 
 <p>The differences between the three models <em>msCentipede</em> , <em>msCentipede_flexbgmean</em> , and <em>msCentipede_flexbg</em> are specified in detail in the associated <a href="">publication</a>. If the model flag is specified to be <em>msCentipede_flexbgmean</em> or <em>msCentipede_flexbg</em>, then a path to a bam file containing chromatin accessibility data from genomic DNA must be passed, using the flag <code>--bam_file_genomicdna</code>.</p>
       </section>
