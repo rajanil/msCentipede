@@ -8,6 +8,8 @@ import pdb
 
 MIN_MAP_QUAL = 10
 MAX_VAL = 65535
+MIN_READ_LEN = 1
+MAX_READ_LEN = 100000
 
 class ZipFile():
     """File class to rapidly handle some file operations on 
@@ -99,36 +101,35 @@ class BamFile():
         """
 
         counts = []
-        filtered_locations = []
-        scores = []
 
-        for location in locations:
+        if self._protocol=='DNase_seq':
 
-            chrom = location[0]
-            strand = location[3]
-            if strand=='+':
-                center = location[1]
-            else:
-                center = location[2]
-            left = max([1,center-width/2])
-            right = min([center+width/2, self._ref_lengths[chrom]])
+            for location in locations:
 
-            # fetch all reads overlapping this genomic location
-            sam_iter = self._handle.fetch(reference=chrom, start=left, end=right)
-            forward = np.zeros((width,), dtype=np.float64)
-            reverse = np.zeros((width,), dtype=np.float64)
+                chrom = location[0]
+                strand = location[3]
+                if strand=='+':
+                    center = location[1]
+                else:
+                    center = location[2]
+                left = max([1,center-width/2])
+                right = min([center+width/2, self._ref_lengths[chrom]])
 
-            for read in sam_iter:
+                # fetch all reads overlapping this genomic location
+                sam_iter = self._handle.fetch(reference=chrom, start=left, end=right)
+                forward = np.zeros((width,), dtype=np.float64)
+                reverse = np.zeros((width,), dtype=np.float64)
 
-                # skip read if unmapped
-                if read.is_unmapped:
-                    continue
+                for read in sam_iter:
 
-                # skip read, if mapping quality is low
-                if read.mapq < MIN_MAP_QUAL:
-                    continue
+                    # skip read if unmapped
+                    if read.is_unmapped:
+                        continue
 
-                if self._protocol=='DNase_seq':
+                    # skip read, if mapping quality is low
+                    if read.mapq < MIN_MAP_QUAL:
+                        continue
+
                     start = read.pos
                     end = start + read.alen - 1
 
@@ -136,38 +137,96 @@ class BamFile():
                     if (read.is_reverse and end >= right) or (not read.is_reverse and start < left):
                         continue
 
-                elif self._protocol=='ATAC_seq':
-                    # site of adapter insertions are 9bp apart
-                    # an offset of +4 / -5 gives approximate site of transposition
-                    start = read.pos+4
-                    end = start + read.alen - 1 - 5
+                    if read.is_reverse:
+                        reverse[end-left] += 1
+                    else:
+                        forward[start-left] += 1
 
-                    # skip read, if site of transposition is outside window
-                    if start<left or start>=right or end<left or end>=right:
-                        continue
-
-                if read.is_reverse:
-                    reverse[end-left] += 1
+                # flip fwd and rev strand read counts, 
+                # if the motif is on the opposite strand.
+                if strand=='+':
+                    count = [forward, reverse]
                 else:
-                    forward[start-left] += 1
+                    count = [reverse[::-1], forward[::-1]]
 
-            # flip fwd and rev strand read counts, 
-            # if the motif is on the opposite strand.
-            if strand=='+':
-                count = [forward, reverse]
-            else:
-                count = [reverse[::-1], forward[::-1]]
-
-            if self._protocol=='ATAC_seq':
-                count = count[0]+count[1]
-            else:
                 count = np.hstack(count)
 
-            # cap the read count at any location
-            count[count>MAX_VAL] = MAX_VAL
-            counts.append(count.astype(np.float64))
+                # cap the read count at any location
+                count[count>MAX_VAL] = MAX_VAL
+                counts.append(count.astype(np.float64))
 
-        counts = np.array(counts)
+        else:
+
+            for l,location in enumerate(locations):
+
+                chrom = location[0]
+                strand = location[3]
+                if strand=='+':
+                    center = location[1]
+                else:
+                    center = location[2]
+                left = max([1,center-width/2])
+                right = min([center+width/2, self._ref_lengths[chrom]])
+
+                # fetch all reads overlapping this genomic location
+                sam_iter = [read for read in self._handle.fetch(reference=chrom, start=left, end=right)]
+                count = np.zeros((width,), dtype=np.float64)
+
+                for read in sam_iter:
+
+                    # discard anomalies
+                    if not (read.is_read1 or read.is_read2):
+                        continue
+
+                    # require that (both) paired-reads are uniquely mapped
+                    if read.is_unmapped or read.mate_is_unmapped:
+                        continue
+
+                    # paired reads mapped to same strand...
+                    if read.is_reverse == read.mate_is_reverse:
+                        continue
+
+                    # read has poor mapping quality
+                    if read.mapq < MIN_MAP_QUAL:
+                        continue
+
+                    # discard fragments that are too long or too short
+                    isize = np.abs(read.isize)
+                    if isize < MIN_READ_LEN or isize > MAX_READ_LEN:
+                        continue
+
+                    # pysam pos starts at 0, not 1
+                    # site of adapter insertions are 9bp apart
+                    # an offset of +4 / -5 gives approximate site of transposition
+                    if read.is_reverse:
+                        if read.pos<=read.mpos:
+                            tpos = read.pos + 4
+                        else:
+                            tpos = read.mpos + isize - 5
+                        # add read, if site of transposition is within window
+                        if left<=tpos<right:
+                            count[tpos-left] += 1
+                    else:
+                        if read.pos>=read.mpos:
+                            tpos = read.mpos + isize - 5
+                        else:
+                            tpos = read.pos + 4
+                        # add read, if site of transposition is within window
+                        if left<=tpos<right:
+                            count[tpos-left] += 1
+
+                # flip read counts,
+                # if the motif is on the opposite strand.
+                if strand=='-':
+                    count = count[::-1]
+
+                counts.append(count)
+
+        counts = np.array(counts).astype(np.float64)
+
+        # cap the read count at all locations
+        counts[counts>MAX_VAL] = MAX_VAL
+
         return counts
 
     def close(self):
