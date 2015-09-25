@@ -1,4 +1,5 @@
 import numpy as np
+import random
 import cPickle
 import load_data
 import mscentipede
@@ -35,7 +36,16 @@ def learn_model(options):
         print "error: ensure all rows in motif instance file contain same number of columns"
         sys.exit(1)
 
-    locations = locations[:options.batch]
+    if len(locations)>options.batch:
+        order = np.argsort(np.array([loc[4] for loc in locations]).astype('float'))
+        if order.size>3*options.batch:
+            order = order[-3*options.batch:]
+            random.shuffle(order)
+            order = order[:options.batch]
+        else:
+            order = order[-options.batch:]
+        locations = [locations[o] for o in order]
+
     try:
         scores = np.array([loc[4:] for loc in locations]).astype('float')
     except ValueError:
