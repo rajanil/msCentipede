@@ -142,7 +142,7 @@ This will run msCentipede with all other default values and output a file `test/
 
 In order to check whether the algorithm could successfully learn a chromatin accessibility profile for a given set of motifs, we have provided a script to plot the shape of the inferred cleavage profile at factor bound sites.
 
-    python plot_accessibility_profile.py
+    $ python plot_accessibility_profile.py
     
     positional arguments
      motif_file            name of a gzipped text file containing positional
