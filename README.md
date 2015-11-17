@@ -100,7 +100,7 @@ options that need to be passed to the script, you can do the following:
                             genomic DNA
       --seed SEED           set seed for random initialization of parameters
 
-We will now describe in detail how to use this software using an example dataset of CTCF motif instances on chromosome 10 in hg19 coordinates is provided in `test/CTCF_chr10_motifs.txt.gz`. DNase-seq data for the GM12878 cell line (bam and bai files) can be downloaded from ENCODE to `test/` . In the following instructions, we assume the data files are named [Gm12878_Rep1.bam](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwDnase/wgEncodeUwDnaseGm12878AlnRep1.bam) and [Gm12878_Rep2.bam](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwDnase/wgEncodeUwDnaseGm12878AlnRep2.bam).
+We will now describe in detail how to use this software using an example dataset of CTCF motif instances on chromosome 10 in hg19 coordinates is provided in `test/Ctcf_chr10_motifs.txt.gz`. DNase-seq data for the GM12878 cell line (bam and bai files) can be downloaded from ENCODE to `test/` . In the following instructions, we assume the data files are named [Gm12878_Rep1.bam](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwDnase/wgEncodeUwDnaseGm12878AlnRep1.bam) and [Gm12878_Rep2.bam](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeUwDnase/wgEncodeUwDnaseGm12878AlnRep2.bam).
 
 The software is designed to run in two separate steps. In the first step, optimal values for the model parameters are estimated using a subset of all motif instances. In the second step, posterior probability of factor binding is inferred for all motif instances. Since accurate estimates of model parameters can be obtained using 5000-10000 motif instances, this strategy enables efficient inference for those transcription factors that have orders of magnitude more motif instances genomewide. If more motif instances are available in the file than the value of the flag `--batch`, then `batch` number of motif instances that have the highest PWM score are used in learning model parameters.
 
@@ -126,17 +126,17 @@ When multiple library / sample replicates are available, the bam files for the r
 
 The model parameters can be learned by passing the following flags.
 
-    python call_binding.py --task learn test/CTCF_chr10_motifs.txt.gz test/Gm12878_Rep1.bam test/Gm12878_Rep2.bam
+    python call_binding.py --task learn test/Ctcf_chr10_motifs.txt.gz test/Gm12878_Rep1.bam test/Gm12878_Rep2.bam
 
-This will run msCentipede with all other default values and output a log file `test/CTCF_chr10_motifs_msCentipede_log.txt` and a file `test/CTCF_chr10_motifs_msCentipede_model_parameters.pkl` in which the model parameter objects are stored. This is a standard Python pickle file that can be viewed using the `cPickle` module.
+This will run msCentipede with all other default values and output a log file `test/Ctcf_chr10_motifs_msCentipede_log.txt` and a file `test/Ctcf_chr10_motifs_msCentipede_model_parameters.pkl` in which the model parameter objects are stored. This is a standard Python pickle file that can be viewed using the `cPickle` module.
 
 ### Inferring factor binding
 
 The posterior log odds of binding for a set of motif instances can be computed by passing the following flags.
 
-    python call_binding.py --task infer test/CTCF_chr10_motifs.txt.gz test/Gm12878_Rep1.bam test/Gm12878_Rep2.bam
+    python call_binding.py --task infer test/Ctcf_chr10_motifs.txt.gz test/Gm12878_Rep1.bam test/Gm12878_Rep2.bam
 
-This will run msCentipede with all other default values and output a file `test/CTCF_chr10_motifs_msCentipede_binding_posterior.txt.gz`.
+This will run msCentipede with all other default values and output a file `test/Ctcf_chr10_motifs_msCentipede_binding_posterior.txt.gz`.
 
 ### Plotting the factor-specific cleavage profile
 
