@@ -718,7 +718,11 @@ cdef class Beta:
 
         xo = self.estim.copy()
         args = dict([('scores',scores),('zeta',zeta)])
-        self.estim = optimizer(xo, beta_function_gradient, beta_function_gradient_hessian, args)
+
+        try:
+            self.estim = optimizer(xo, beta_function_gradient, beta_function_gradient_hessian, args)
+        except (ValueError, OverflowError):
+            pass
 
         if np.isnan(self.estim).any():
             print "Nan in Beta"
