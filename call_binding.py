@@ -24,10 +24,10 @@ def learn_model(options):
         sys.exit(1)
 
     # load read data
-    bam_handles = [load_data.BamFile(bam_file, options.protocol) for bam_file in options.bam_files]
-    count_data = np.array([bam_handle.get_read_counts(locations, width=options.window) \
-        for bam_handle in bam_handles])
-    ig = [handle.close() for handle in bam_handles]   
+    data_tracks = [load_data.DataTrack(bam_file, options.protocol) for bam_file in options.bam_files]
+    count_data = np.array([track.get_read_counts(locations, options.window) \
+        for track in data_tracks])
+    [track.close() for track in data_tracks]   
     total_counts = np.sum(count_data, 2).T
 
     # extract reads within specified window size
@@ -37,9 +37,9 @@ def learn_model(options):
     if options.model=='msCentipede':
         background_counts = np.ones((1,2*options.window,1), dtype=float)
     elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
-        bam_handle = load_data.BamFile(options.bam_file_genomicdna, options.protocol)
-        bg_count_data = np.array([bam_handle.get_read_counts(locations, width=options.window)])
-        bam_handle.close()
+        bg_data_track = load_data.DataTrack(options.bam_file_genomicdna, options.protocol)
+        bg_count_data = np.array([bg_data_track.get_read_counts(locations, options.window)])
+        bg_data_track.close()
         background_counts = np.array([count.T for count in bg_count_data]).T
 
     # estimate model parameters
@@ -80,13 +80,13 @@ def infer_binding(options):
     motif_handle = load_data.ZipFile(options.motif_file)
     
     # open read data handles
-    bam_handles = [load_data.BamFile(bam_file, options.protocol) for bam_file in options.bam_files]
+    data_tracks = [load_data.DataTrack(bam_file, options.protocol) for bam_file in options.bam_files]
 
     # open background data handles
     if options.model=='msCentipede':
         background_counts = np.ones((1,2*options.window,1), dtype=float)
     elif options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
-        bg_handle = load_data.BamFile(options.bam_file_genomicdna, options.protocol)
+        bg_data_track = load_data.DataTrack(options.bam_file_genomicdna, options.protocol)
 
     # check number of motif sites
     pipe = load_data.subprocess.Popen("zcat %s | wc -l"%options.motif_file, \
@@ -103,8 +103,8 @@ def infer_binding(options):
         starttime = time.time()
         locations = motif_handle.read(batch=options.batch)
 
-        count_data = np.array([bam_handle.get_read_counts(locations, width=options.window) \
-            for bam_handle in bam_handles])
+        count_data = np.array([track.get_read_counts(locations, options.window) \
+            for track in data_tracks])
         total_counts = np.sum(count_data, 2).T
         counts = np.array([count.T for count in count_data]).T
 
@@ -112,7 +112,7 @@ def infer_binding(options):
 
         # specify background
         if options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
-            bg_count_data = np.array([bg_handle.get_read_counts(locations, width=options.window)])
+            bg_count_data = np.array([bg_data_track.get_read_counts(locations, options.window)])
             background_counts = np.array([count.T for count in bg_count_data]).T
 
         posterior_log_odds, prior_log_odds, footprint_log_likelihood_ratio, \
@@ -131,9 +131,8 @@ def infer_binding(options):
 
     handle.close()
     if options.model in ['msCentipede_flexbgmean','msCentipede_flexbg']:
-        bg_handle.close()
-    ig = [handle.close() for handle in bam_handles]
-
+        bg_data_track.close()
+    [track.close() for track in data_tracks]
 
 def parse_args():
 
@@ -229,15 +228,15 @@ def parse_args():
 
     # if no model file is provided, create a `default` model file name
     if options.model_file is None:
-        options.model_file = "%s_%s_model_parameters.pkl"%(options.motif_file.split('.')[0], '_'.join(options.model.split('-')))
+        options.model_file = "%s_%s_model_parameters.pkl"%(options.motif_file, options.model)
 
     # if no posterior file is provided, create a `default` posterior file name
     if options.posterior_file is None:
-        options.posterior_file = "%s_%s_binding_posterior.txt.gz"%(options.motif_file.split('.')[0], '_'.join(options.model.split('-')))
+        options.posterior_file = "%s_%s_binding_posterior.txt.gz"%(options.motif_file, options.model)
 
     # if no log file is provided, create a `default` log file name
     if options.log_file is None:
-        options.log_file = "%s_%s_log.txt"%(options.motif_file.split('.')[0],'_'.join(options.model.split('-')))
+        options.log_file = "%s_%s.log"%(options.motif_file, options.model)
     
     # make sure model file exists, before trying to run inference
     if options.task=='infer':
@@ -245,24 +244,22 @@ def parse_args():
             handle = open(options.model_file, 'r')
             handle.close()
         except IOError:
-            parser.error("Need to provide the file where model parameters are saved")
+            parser.error("To perform inference, please provide path to file where model parameters are saved")
 
     if options.model in ['msCentipede_flexbgmean','msCentipede_flexbg'] and options.bam_file_genomicdna is None:
-        parser.error("Need to provide a bam file containing chromatin accessibility "
-            "data in genomic DNA, if the model is specified to be "
-            "msCentipede-flexbgmean or msCentipede-flexbg")
+        parser.error("Model is specified to be %s; please provide a bam file "
+            "containing chromatin accessibility measurements from genomic DNA"%options.model)
 
     if options.seed is not None:
         np.random.seed(int(options.seed))
 
+    # ensure that window size is positive and a power of 2
     if options.window<=0:
         options.window = 128
-
     if not ((options.window & (options.window - 1)) == 0):
         options.window = 2**(int(np.log2(options.window)))
 
     return options
-
 
 def main():
 
