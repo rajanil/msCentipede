@@ -17,8 +17,8 @@ ext_modules = cythonize(ext_modules)
 setup(
     name = 'msCentipede',
     author = 'Anil Raj',
-    version = '1.0',
+    version = '1.1',
     cmdclass = {'build_ext': build_ext},
-    include_dirs=[numpy.get_include(), '.'],
+    include_dirs=[numpy.get_include(), '.', '/usr/local/include/', 'model/'],
     ext_modules = ext_modules
 )

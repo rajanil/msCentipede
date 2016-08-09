@@ -1,13 +1,15 @@
+
 import numpy as np
 cimport numpy as np
+from model.footprint cimport Pi, Tau
+from model.abundance cimport Alpha, Omega
+from model.prior cimport Beta
 from cpython cimport bool
 
 cdef class Data:
 
-	cdef public long N, L, R, J
-	cdef public dict value, total
-
-	cdef transform_to_multiscale(self, np.ndarray[np.float64_t, ndim=3] reads)
+	cdef public long N, R, J
+	cdef public np.ndarray left, total
 
 
 cdef class Zeta:
@@ -19,68 +21,23 @@ cdef class Zeta:
 
 	cdef update(self, Data data, np.ndarray[np.float64_t, ndim=2] scores, \
         Pi pi, Tau tau, Alpha alpha, Beta beta, Omega omega, \
-        Pi pi_null, Tau tau_null, str model)
+        Pi pi_null, Tau tau_null, str model_type)
 
 	cdef infer(self, Data data, np.ndarray[np.float64_t, ndim=2] scores, \
         Pi pi, Tau tau, Alpha alpha, Beta beta, Omega omega, \
-        Pi pi_null, Tau tau_null, str model)
+        Pi pi_null, Tau tau_null, str model_type)
 
-
-cdef class Pi:
-
-	cdef public long J
-	cdef public dict value
-
-cdef tuple pi_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
-
-cdef tuple pi_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
-
-cdef class Tau:
-
-	cdef public long J
-	cdef public np.ndarray estim
-
-cdef tuple tau_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
-
-cdef tuple tau_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
-
-cdef class Alpha:
-
-	cdef public long R
-	cdef public np.ndarray estim
-
-cdef tuple alpha_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
-
-cdef tuple alpha_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
-
-cdef class Omega:
-
-	cdef public long R
-	cdef public np.ndarray estim
-
-	cdef update(self, Zeta zeta, Alpha alpha)
-
-
-cdef class Beta:
-
-	cdef public long S
-	cdef public np.ndarray estim
-
-cdef tuple beta_function_gradient(np.ndarray[np.float64_t, ndim=1] x, dict args)
-
-cdef tuple beta_function_gradient_hessian(np.ndarray[np.float64_t, ndim=1] x, dict args)
-
-cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, Tau tau_null, str model)
+cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, Tau tau_null, str model_type)
 
 
 cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 	Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
-	Omega omega, Pi pi_null, Tau tau_null, str model)
+	Omega omega, Pi pi_null, Tau tau_null, str model_type)
 
 cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
-    Omega omega, Pi pi_null, Tau tau_null, str model)
+    Omega omega, Pi pi_null, Tau tau_null, str model_type)
 
 cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
-    Omega omega, Pi pi_null, Tau tau_null, str model)
+    Omega omega, Pi pi_null, Tau tau_null, str model_type)
