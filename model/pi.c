@@ -156,3 +156,4 @@ void pi_hessian( double* x, double* Hf, double* left, double* total, double* zet
     free( alpha );
     free( beta );
 }
+

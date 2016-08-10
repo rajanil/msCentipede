@@ -166,3 +166,4 @@ void tau_hessian( double* x, double* Hf, double* left, double* total, double* ze
     free( alpha );
     free( beta );
 }
+

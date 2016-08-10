@@ -12,7 +12,7 @@ import utils
 # suppress optimizer output
 solvers.options['show_progress'] = False
 
-def optimize(xo, function_gradient, function_gradient_hessian, dict args):
+def optimize(xo, function_gradient, function_gradient_hessian, args):
     """Calls the appropriate nonlinear convex optimization solver 
     in the package `cvxopt` to find optimal values for the relevant
     parameters, given subroutines that evaluate a function, 

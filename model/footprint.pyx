@@ -247,3 +247,4 @@ cdef class Tau:
                    N, R, J)
 
         return f, Df, Hf
+
