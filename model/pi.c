@@ -39,16 +39,16 @@ void pi_function( double* x, double* f, double* left, double* total, double* zet
                 // loop over replicates
                 for (r=0; r<R; r++){
 
-                    # pragma omp atomic
+                    #pragma omp atomic
                     F += gsl_sf_lngamma(left[idx+r]+alpha) + 
                          gsl_sf_lngamma(total[idx+r]-left[idx+r]+beta);
                 }
 
-                # pragma omp atomic
+                #pragma omp atomic
                 f[0] += zeta[n]*F;
             }
 
-            # pragma omp atomic
+            #pragma omp atomic
             f[0] -= zetasum * R * (gsl_sf_lngamma(alpha) + gsl_sf_lngamma(beta));
         }
    	}
@@ -84,12 +84,12 @@ void pi_gradient( double* x, double* Df, double* left, double* total, double* ze
 
                 // loop over replicates
                 for (r=0; r<R; r++){
-                    # pragma omp atomic
+                    #pragma omp atomic
                     df += gsl_sf_psi(left[idx+r]+alpha) - 
                           gsl_sf_psi(total[idx+r]-left[idx+r]+beta);
                 }
 
-                # pragma omp atomic            
+                #pragma omp atomic            
                 Df[l] += zeta[n] * df;
             }
 
@@ -128,12 +128,12 @@ void pi_hessian( double* x, double* Hf, double* left, double* total, double* zet
 
                 // loop over replicates
                 for (r=0; r<R; r++){
-                    # pragma omp atomic
+                    #pragma omp atomic
                     hf += gsl_sf_psi_1(left[idx+r]+alpha) + 
                           gsl_sf_psi_1(total[idx+r]-left[idx+r]+beta);
                 }
 
-                # pragma omp atomic
+                #pragma omp atomic
                 Hf[l*L+l] += zeta[n] * hf;
             }
 

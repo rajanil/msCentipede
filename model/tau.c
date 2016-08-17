@@ -40,17 +40,17 @@ void tau_function( double* x, double* f, double* left, double* total, double* ze
                 // loop over replicates
                 for (r=0; r<R; r++){
 
-                    # pragma omp atomic
+                    #pragma omp atomic
                     F += gsl_sf_lngamma(left[idx+r]+alpha) + 
                          gsl_sf_lngamma(total[idx+r]-left[idx+r]+beta) - 
                          gsl_sf_lngamma(total[idx+r]+x[j]);
                 }
 
-                # pragma omp atomic
+                #pragma omp atomic
                 f[0] += zeta[n]*F;
             }
 
-            # pragma omp atomic
+            #pragma omp atomic
             f[0] += zetasum * R * (gsl_sf_lngamma(x[j]) - gsl_sf_lngamma(alpha) - gsl_sf_lngamma(beta));
         }
    	}
@@ -86,17 +86,17 @@ void tau_gradient( double* x, double* Df, double* left, double* total, double* z
 
                 // loop over replicates
                 for (r=0; r<R; r++){
-                    # pragma omp atomic
+                    #pragma omp atomic
                     df += pi[l] * gsl_sf_psi(left[idx+r]+alpha) + 
                          (1-pi[l]) * gsl_sf_psi(total[idx+r]-left[idx+r]+beta) - 
                          gsl_sf_psi(total[idx+r]+x[j]);
                 }
 
-                # pragma omp atomic
+                #pragma omp atomic
                 Df[j] += zeta[n] * df;
             }
 
-            # pragma omp atomic
+            #pragma omp atomic
             Df[j] += zetasum * R * (gsl_sf_psi(x[j]) - pi[l] * gsl_sf_psi(alpha) - 
                         (1-pi[l]) * gsl_sf_psi(beta));
         }
@@ -133,17 +133,17 @@ void tau_hessian( double* x, double* Hf, double* left, double* total, double* ze
 
                 // loop over replicates
                 for (r=0; r<R; r++){
-                    # pragma omp atomic
+                    #pragma omp atomic
                     hf += pi[l] * pi[l] * gsl_sf_psi_1(left[idx+r]+alpha) + 
                          (1-pi[l]) * (1-pi[l]) * gsl_sf_psi_1(total[idx+r]-left[idx+r]+beta) - 
                          gsl_sf_psi_1(total[idx+r]+x[j]);
                 }
             
-                # pragma omp atomic
+                #pragma omp atomic
                 Hf[j*J+j] += zeta[n] * hf;
             }
 
-            # pragma omp atomic
+            #pragma omp atomic
             Hf[j*J+j] += zetasum * R * (gsl_sf_psi_1(x[j]) - pi[l] * pi[l] * gsl_sf_psi_1(alpha) - 
                         (1-pi[l]) * (1-pi[l]) * gsl_sf_psi_1(beta));
 
