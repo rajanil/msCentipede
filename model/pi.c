@@ -7,153 +7,138 @@
 #include <gsl/gsl_sf_psi.h>
 #include <gsl/gsl_sf_gamma.h>
 #include <gsl/gsl_errno.h>
+#include <omp.h>
 
-void pi_function( double* x, double* f, double* left, double* total, double* zeta, double* tau, const double zetasum, long N, long R, long J )
+void pi_function( double* x, double* f, double* left, double* total, double* zeta, double* tau, const double zetasum, long N, long R, long J, long T )
 {
 
 	long idx, n, j, r, l, start, end, L;
-	double F;
-	double *alpha, *beta;
+	double F, alpha, beta;
 
-	L = powl(2,J+1)-1;
+	L = powl(2,J)-1;
+    omp_set_num_threads(T);
 
-	// initialize parameters for beta distribution
-	alpha = (double*) malloc(L * sizeof(double));
-	beta = (double*) malloc(L * sizeof(double));
-	// loop over scales
-	for (j=0; j<J; j++) {
+    // loop over scales
+    for (j=0; j<J; j++) {
+
         start = powl(2,j)-1;
         end = powl(2,j+1)-1;
         // loop over locations
         for (l=start; l<end; l++) {
-        	alpha[l] = x[l] * tau[j];
-        	beta[l] = (1.-x[l]) * tau[j];
-        }
-    }
 
-    // loop over scales and locations
-    for (l=0; l<L; l++) {
+            alpha = x[l] * tau[j];
+            beta = (1-x[l]) * tau[j];
 
-    	// loop over samples
-    	for (n=0; n<N; n++){
+            // loop over samples
+            #pragma omp parallel for private (r, n, F, idx)
+            for (n=0; n<N; n++){
 
-    		F = 0.;
-    		idx = n*L*R + l*R;
+                F = 0.;
+                idx = n*L*R + l*R;
 
-    		// loop over replicates
-    		for (r=0; r<R; r++){
+                // loop over replicates
+                for (r=0; r<R; r++){
 
-    			F += gsl_sf_lngamma(left[idx+r]+alpha[l]) + 
-    				 gsl_sf_lngamma(total[idx+r]-left[idx+r]+beta[l]);
-    		}
-    		f[0] = f[0] + zeta[n]*F;
-    	}
+                    # pragma omp atomic
+                    F += gsl_sf_lngamma(left[idx+r]+alpha) + 
+                         gsl_sf_lngamma(total[idx+r]-left[idx+r]+beta);
+                }
 
-    	f[0] = f[0] - zetasum * R * (gsl_sf_lngamma(alpha[l]) + gsl_sf_lngamma(beta[l]));
-   	}
-   	free( alpha );
-    free( beta );
-}
-
-void pi_gradient( double* x, double* Df, double* left, double* total, double* zeta, double* tau, const double zetasum, long N, long R, long J )
-{
-
-    int j;
-	long idx, n, r, l, start, end, L;
-	double df;
-	double *alpha, *beta;
-
-    L = powl(2,J+1)-1;
-
-	// initialize parameters for beta distribution
-	alpha = (double*) malloc(L * sizeof(double));
-	beta = (double*) malloc(L * sizeof(double));
-	// loop over scales
-	for (j=0; j<J; j++) {
-		start = powl(2,j)-1;
-        end = powl(2,j+1)-1;
-        // loop over locations
-        for (l=start; l<end; l++) {
-        	alpha[l] = x[l] * tau[j];
-        	beta[l] = (1.-x[l]) * tau[j];
-        }
-    }
-
-    // loop over scales and locations
-    for (l=0; l<L; l++) {
-
-    	frexp(l, &j);
-
-    	// loop over samples
-    	for (n=0; n<N; n++){
-
-    		idx = n*L*R + l*R;
-    		df = 0.;
-
-    		// loop over replicates
-    		for (r=0; r<R; r++){
-            	df += gsl_sf_psi(left[idx+r]+alpha[l]) - 
-            		  gsl_sf_psi(total[idx+r]-left[idx+r]+beta[l]);
+                # pragma omp atomic
+                f[0] += zeta[n]*F;
             }
-        
-        	Df[l] = Df[l] + zeta[n] * df;
+
+            # pragma omp atomic
+            f[0] -= zetasum * R * (gsl_sf_lngamma(alpha) + gsl_sf_lngamma(beta));
         }
-
-        Df[l] = tau[j] * (Df[l] - zetasum * R * (gsl_sf_psi(alpha[l]) - gsl_sf_psi(beta[l])));
-    }
-
-    free( alpha );
-    free( beta );
+   	}
 }
 
-void pi_hessian( double* x, double* Hf, double* left, double* total, double* zeta, double* tau, const double zetasum, long N, long R, long J )
+void pi_gradient( double* x, double* Df, double* left, double* total, double* zeta, double* tau, const double zetasum, long N, long R, long J, long T )
 {
 
     int j;
 	long idx, n, r, l, start, end, L;
-	double hf;
-	double *alpha, *beta;
+	double df, alpha, beta;
 
-	L = powl(2,J+1)-1;
+    L = powl(2,J)-1;
+    omp_set_num_threads(T);
 
-	// initialize parameters for beta distribution
-	alpha = (double*) malloc(L * sizeof(double));
-	beta = (double*) malloc(L * sizeof(double));
-	// loop over scales
-	for (j=0; j<J; j++) {
-		start = powl(2,j)-1;
+    // loop over scales
+    for (j=0; j<J; j++) {
+
+        start = powl(2,j)-1;
         end = powl(2,j+1)-1;
         // loop over locations
         for (l=start; l<end; l++) {
-        	alpha[l] = x[l] * tau[j];
-        	beta[l] = (1.-x[l]) * tau[j];
+
+            alpha = x[l] * tau[j];
+            beta = (1-x[l]) * tau[j];
+
+            // loop over samples
+            #pragma omp parallel for private (r, n, df, idx)
+            for (n=0; n<N; n++){
+
+                idx = n*L*R + l*R;
+                df = 0.;
+
+                // loop over replicates
+                for (r=0; r<R; r++){
+                    # pragma omp atomic
+                    df += gsl_sf_psi(left[idx+r]+alpha) - 
+                          gsl_sf_psi(total[idx+r]-left[idx+r]+beta);
+                }
+
+                # pragma omp atomic            
+                Df[l] += zeta[n] * df;
+            }
+
+            Df[l] = tau[j] * (Df[l] - zetasum * R * (gsl_sf_psi(alpha) - gsl_sf_psi(beta)));
         }
     }
+}
 
-    // loop over scales and locations
-    for (l=0; l<L; l++) {
+void pi_hessian( double* x, double* Hf, double* left, double* total, double* zeta, double* tau, const double zetasum, long N, long R, long J, long T )
+{
 
-    	frexp(l, &j);
+    int j;
+	long idx, n, r, l, start, end, L;
+	double hf, alpha, beta;
 
-    	// loop over samples
-    	for (n=0; n<N; n++){
+	L = powl(2,J)-1;
+    omp_set_num_threads(T);
 
-    		idx = n*L*R + l*R;
-    		hf = 0.;
+    // loop over scales
+    for (j=0; j<J; j++) {
 
-	    	// loop over replicates
-			for (r=0; r<R; r++){
-	        	hf += gsl_sf_psi_1(left[idx+r]+alpha[l]) + 
-	        		  gsl_sf_psi_1(total[idx+r]-left[idx+r]+beta[l]);
-	        }
+        start = powl(2,j)-1;
+        end = powl(2,j+1)-1;
+        // loop over locations
+        for (l=start; l<end; l++) {
 
-	        Hf[l*L+l] = Hf[l*L+l] + zeta[n] * hf;
-	    }
+            alpha = x[l] * tau[j];
+            beta = (1-x[l]) * tau[j];
 
-        Hf[l*L+l] = tau[j] * tau[j] * (Hf[l*L+l] - zetasum * R * (gsl_sf_psi_1(alpha[l]) + gsl_sf_psi_1(beta[l])));
+            // loop over samples
+            #pragma omp parallel for private (r, n, hf, idx)
+            for (n=0; n<N; n++){
+
+                idx = n*L*R + l*R;
+                hf = 0.;
+
+                // loop over replicates
+                for (r=0; r<R; r++){
+                    # pragma omp atomic
+                    hf += gsl_sf_psi_1(left[idx+r]+alpha) + 
+                          gsl_sf_psi_1(total[idx+r]-left[idx+r]+beta);
+                }
+
+                # pragma omp atomic
+                Hf[l*L+l] += zeta[n] * hf;
+            }
+
+            Hf[l*L+l] = tau[j] * tau[j] * (Hf[l*L+l] - zetasum * R * (gsl_sf_psi_1(alpha) + gsl_sf_psi_1(beta)));
+        }
     }
-
-    free( alpha );
-    free( beta );
 }
 

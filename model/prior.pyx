@@ -27,7 +27,7 @@ cdef class Beta:
     def __cinit__(self, ndarray[np.float64_t, ndim=2] scores):
     
         self.S = scores.shape[1]
-        self.value = np.random.rand(self.S)
+        self.value = np.hstack([-10*np.random.rand(1), np.random.rand(self.S-1)])
 
     cdef update(self, ndarray[np.float64_t, ndim=2] scores, zeta):
         """Update the estimates of parameter `beta` in the model.
@@ -39,45 +39,56 @@ cdef class Beta:
         # construct args dictionary
         args = dict([('scores',scores),('zeta',zeta)])
 
-        self.value = optimizer.optimize(xo, self.function_gradient, self.function_gradient_hessian, args)
+        try:
+            self.value = optimizer.optimize(xo, self.function_gradient, self.function_gradient_hessian, args)
+        except:
+            pass
 
-    cdef tuple function_gradient(self, ndarray[np.float64_t, ndim=1] x, dict args):
+    @staticmethod
+    cdef tuple function_gradient(ndarray[np.float64_t, ndim=1] x, dict args):
         """Computes the likelihood function (only terms that 
         contain `beta`) and its gradient.
         """
 
-        cdef double f
-        cdef ndarray scores, zeta, arg, Df
+        cdef ndarray f, Df, scores, zeta, arg, pidx, nidx
 
         scores = args['scores']
         zeta = args['zeta'].value
 
         arg = utils.insum(x*scores, [1])
+
+        pidx = arg>=0
+        nidx = arg<0
+        f = -1 * (np.sum(zeta[nidx]*arg[nidx],0) - \
+                  np.sum((1-zeta[pidx])*arg[pidx],0) - \
+                  np.sum(utils.nplog(1+np.exp(-1*np.abs(arg))),0))
         
-        f = np.sum(arg * zeta - utils.nplog(1 + np.exp(arg)))
-        
-        Df = np.sum(scores * (zeta - utils.logistic(-arg)),0)
-        
+        Df = -1 * utils.outsum(scores * (zeta - utils.logistic(-arg)))
+
         return f, Df
 
-    cdef tuple function_gradient_hessian(self, ndarray[np.float64_t, ndim=1] x, dict args):
+    @staticmethod
+    cdef tuple function_gradient_hessian(ndarray[np.float64_t, ndim=1] x, dict args):
         """Computes the likelihood function (only terms that
         contain `beta`), its gradient, and its hessian.
         """
 
-        cdef double f
-        cdef ndarray scores, zeta, arg, Df, Hf, larg
+        cdef ndarray f, Df, Hf, scores, zeta, arg, larg, pidx, nidx
 
         scores = args['scores']
         zeta = args['zeta'].value
 
         arg = utils.insum(x * scores,[1])
         
-        f = np.sum(arg * zeta - utils.nplog(1 + np.exp(arg)))
+        pidx = arg>=0
+        nidx = arg<0
+        f = -1 * (np.sum(zeta[nidx]*arg[nidx],0) - \
+                  np.sum((1-zeta[pidx])*arg[pidx],0) - \
+                  np.sum(utils.nplog(1+np.exp(-1*np.abs(arg))),0))
         
-        Df = np.sum(scores * (zeta - utils.logistic(-arg)),0)
+        Df = -1 * utils.outsum(scores * (zeta - utils.logistic(-arg)))
         
         larg = scores * utils.logistic(arg) * utils.logistic(-arg)
         Hf = np.dot(scores.T, larg)
-        
+
         return f, Df, Hf

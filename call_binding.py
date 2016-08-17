@@ -16,6 +16,10 @@ def learn_model(options):
         print "Error: ensure all rows in motif instance file contain same number of columns"
         sys.exit(1)
 
+    # order locations and select
+    # top motifs for model learning
+    order = np.argsort([loc[4] for loc in locations])[::-1]
+    locations = [locations[o] for o in order]
     locations = locations[:options.batch]
     try:
         scores = np.array([loc[4:] for loc in locations]).astype('float')
@@ -44,7 +48,8 @@ def learn_model(options):
 
     # estimate model parameters
     footprint_model, count_model, prior, runlog = mscentipede.estimate_optimal_model(counts, total_counts, scores, \
-        background_counts, options.model, options.restarts, options.mintol)
+        background_counts, options.model, options.threads, options.restarts, options.mintol)
+    pdb.set_trace()
 
     # write log file
     runlog.insert(0,'Motif file: %s'%options.motif_file)
@@ -163,7 +168,7 @@ def parse_args():
 
     parser.add_argument("--mintol", 
                         type=float, 
-                        default=1e-6,
+                        default=1e-4,
                         help="convergence criterion for change in per-site marginal likelihood (default: 1e-6)")
 
     parser.add_argument("--model_file", 
@@ -196,6 +201,12 @@ def parse_args():
                         help="maximum number of motif instances used for learning model parameters. "
                         " this is also the number of motif instances on which inference is "
                         " performed at a time. (default: 10000)")
+
+    parser.add_argument("--threads",
+                        type=int,
+                        default=1,
+                        help="maximum number of threads that will be spawned to parallelize "
+                        " the code. this is typically the maximum number of cores to be allocated.")
 
     parser.add_argument("motif_file",
                         action="store",

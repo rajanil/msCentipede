@@ -17,7 +17,7 @@ cdef class Zeta:
 	cdef public long N
 	cdef public np.ndarray total, prior_log_odds, \
 		footprint_log_likelihood_ratio, total_log_likelihood_ratio, \
-		posterior_log_odds, estim
+		posterior_log_odds, value
 
 	cdef update(self, Data data, np.ndarray[np.float64_t, ndim=2] scores, \
         Pi pi, Tau tau, Alpha alpha, Beta beta, Omega omega, \
@@ -29,15 +29,14 @@ cdef class Zeta:
 
 cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, Tau tau_null, str model_type)
 
-
 cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 	Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
 	Omega omega, Pi pi_null, Tau tau_null, str model_type)
 
 cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
-    Omega omega, Pi pi_null, Tau tau_null, str model_type)
+    Omega omega, Pi pi_null, Tau tau_null, long threads, str model_type)
 
 cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
-    Omega omega, Pi pi_null, Tau tau_null, str model_type)
+    Omega omega, Pi pi_null, Tau tau_null, long threads, str model_type)

@@ -23,8 +23,7 @@ class ZipFile():
     def __init__(self, filename):
 
         if os.path.isfile(filename):
-            pipe = subprocess.Popen(["zcat", filename], stdout=subprocess.PIPE)
-            self.handle = pipe.stdout
+            self.handle = gzip.open(filename, 'r')
             # remove header
             header = self.handle.next()
         else:
@@ -59,8 +58,8 @@ class ZipFile():
         return locations
 
     def close(self): 
-      
-        pass
+
+        self.handle.close()
 
 class DataTrack():
     """Class to handle file operations on 
@@ -108,7 +107,7 @@ class DataTrack():
         """
 
         tbi_file_prefix = os.path.splitext(self._bam_filename)[0]
-    	sam_handle = pysam.Samfile(filename, "rb")
+    	sam_handle = pysam.Samfile(self._bam_filename, "rb")
 
         if self._protocol=='ATAC_seq':
 
@@ -188,18 +187,18 @@ class DataTrack():
                         continue
 
                     # site of DNase cut
-                    if read.strand=='+':
-                        site = read.pos
-                        try:
-                            fwd_counts[site] += 1
-                        except KeyError:
-                            fwd_counts[site] = 1
-                    elif read.strand=='-':
+                    if read.is_reverse:
                         site = read.positions[-1] - 1
                         try:
                             rev_counts[site] += 1
                         except KeyError:
                             rev_counts[site] = 1
+                    else:
+                        site = read.pos
+                        try:
+                            fwd_counts[site] += 1
+                        except KeyError:
+                            fwd_counts[site] = 1
 
                 # write forward strand counts to output file
                 indices = np.sort(fwd_counts.keys())

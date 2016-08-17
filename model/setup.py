@@ -12,7 +12,8 @@ ext_modules = [Extension("abundance", sources=["abundance.pyx"]),
                Extension("prior", sources=["prior.pyx"]),
                Extension("footprint", sources=["footprint.pyx", "pi.c", "tau.c"],
                 libraries=["gsl","gslcblas"],
-                extra_compile_args=["-O3"]),
+                extra_compile_args=["-O3","-ffast-math","-fopenmp"], 
+                extra_link_args=["-lm","-fopenmp"]),
                Extension("utils", ["utils.pyx"])]
 ext_modules = cythonize(ext_modules)
 

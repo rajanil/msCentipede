@@ -37,12 +37,14 @@ cdef class Data:
         L = reads.shape[1]
         self.R = reads.shape[2]
         self.J = math.frexp(L)[1]-1
-        self.left = np.zeros((self.N,L-1,self.R), dtype=np.int64)
-        self.total = np.zeros((self.N,L-1,self.R), dtype=np.int64)
+        self.left = np.zeros((self.N,L-1,self.R), dtype=np.float64)
+        self.total = np.zeros((self.N,L-1,self.R), dtype=np.float64)
         for j from 0 <= j < self.J:
             size = L/(2**(j+1))
-            self.total[:,2**j-1:2**(j+1)-1,:] = np.array([reads[:,k*size:(k+2)*size,:].sum(1) for k in xrange(0,2**(j+1),2)]).T
-            self.left[:,2**j-1:2**(j+1)-1,:] = np.array([reads[:,k*size:(k+1)*size,:].sum(1) for k in xrange(0,2**(j+1),2)]).T
+            self.total[:,2**j-1:2**(j+1)-1,:] = np.transpose(np.array([reads[:,k*size:(k+2)*size,:].sum(1) \
+                                                for k in xrange(0,2**(j+1),2)]), (1,0,2))
+            self.left[:,2**j-1:2**(j+1)-1,:] = np.transpose(np.array([reads[:,k*size:(k+1)*size,:].sum(1) \
+                                                for k in xrange(0,2**(j+1),2)]), (1,0,2))
 
 
 cdef class Zeta:
@@ -71,26 +73,22 @@ cdef class Zeta:
             self.posterior_log_odds = np.zeros((self.N,1), dtype=float)
         else:
             self.value = np.zeros((self.N, 1),dtype=float)
-            order = np.argsort(self.total.sum(1))
-            indices = order[:self.N/2]
-            self.value[indices,0] = -utils.MAX
-            indices = order[self.N/2:]
+            order = np.argsort(self.total.sum(1))[::-1]
+            indices = order[:self.N/5]
             self.value[indices,0] = utils.MAX
+            indices = order[self.N/5:]
+            self.value[indices,0] = -utils.MAX
             self.value = utils.logistic(-1*self.value)
 
     cdef update(self, Data data, np.ndarray[np.float64_t, ndim=2] scores, \
         Pi pi, Tau tau, Alpha alpha, Beta beta, Omega omega, \
-        Pi pi_null, Tau tau_null, str model):
+        Pi pi_null, Tau tau_null, str model_type):
 
         cdef long j
-        cdef np.ndarray[np.float64_t, ndim=2] footprint_logodds, prior_logodds, negbin_logodds
-        cdef Data lhoodA, lhoodB
+        cdef np.ndarray[np.float64_t, ndim=2] footprint_logodds, prior_logodds, negbin_logodds, lhood_bound, lhood_unbound
 
-        footprint_logodds = np.zeros((self.N,1), dtype=float)
-        lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model)
-
-        for j from 0 <= j < data.J:
-            footprint_logodds += utils.insum(lhoodA.value[j] - lhoodB.value[j],[1])
+        lhood_bound, lhood_unbound = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model_type)
+        footprint_logodds = utils.insum(lhood_bound-lhood_unbound, [1])
 
         prior_logodds = utils.insum(beta.value * scores, [1])
         negbin_logodds = utils.insum(gammaln(self.total + alpha.value.T[1]) \
@@ -105,16 +103,13 @@ cdef class Zeta:
 
     cdef infer(self, Data data, np.ndarray[np.float64_t, ndim=2] scores, \
         Pi pi, Tau tau, Alpha alpha, Beta beta, Omega omega, \
-        Pi pi_null, Tau tau_null, str model):
+        Pi pi_null, Tau tau_null, str model_type):
 
         cdef long j
-        cdef Data lhoodA, lhoodB
+        cdef np.ndarray lhood_bound, lhood_unbound
 
-        lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model)
-
-        for j from 0 <= j < data.J:
-            self.footprint_log_likelihood_ratio += utils.insum(lhoodA.value[j] - lhoodB.value[j],[1])
-        self.footprint_log_likelihood_ratio = self.footprint_log_likelihood_ratio / np.log(10)
+        lhood_bound, lhood_unbound = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model_type)
+        self.footprint_log_likelihood_ratio = utils.insum(lhood_bound-lhood_unbound, [1]) / np.log(10)
 
         self.prior_log_odds = utils.insum(beta.value * scores, [1]) / np.log(10)
 
@@ -156,36 +151,50 @@ cdef tuple compute_footprint_likelihood(Data data, Pi pi, Tau tau, Pi pi_null, T
     """
 
     cdef long j, r
-    cdef Data lhood_bound, lhood_unbound
+    cdef np.ndarray lhood_bound, lhood_unbound, alpha, beta, ttau
 
-    lhood_bound = Data()
-    lhood_unbound = Data()
+    alpha = np.zeros((pi.L,), dtype='float')
+    beta = np.zeros((pi.L,), dtype='float')
+    ttau = np.zeros((pi.L,), dtype='float')
 
     for j from 0 <= j < data.J:
-        value = np.sum(data.value[j],0)
-        total = np.sum(data.total[j],0)
-        
-        lhood_bound.value[j] = np.sum([gammaln(data.value[j][r] + pi.value[j] * tau.value[j]) \
-            + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi.value[j]) * tau.value[j]) \
-            - gammaln(data.total[j][r] + tau.value[j]) + gammaln(tau.value[j]) \
-            - gammaln(pi.value[j] * tau.value[j]) - gammaln((1 - pi.value[j]) * tau.value[j]) \
-            for r in xrange(data.R)],0)
+        start = 2**j-1
+        end = 2**(j+1)-1
+        alpha[start:end] = pi.value[start:end] * tau.value[j]
+        beta[start:end] = (1-pi.value[start:end]) * tau.value[j]
+        ttau[start:end] = tau.value[j]
 
-        if model_type in ['msCentipede','msCentipede_flexbgmean']:
-            
-            lhood_unbound.value[j] = value * utils.nplog(pi_null.value[j]) \
-                + (total - value) * utils.nplog(1 - pi_null.value[j])
-    
-        elif model_type=='msCentipede_flexbg':
-            
-            lhood_unbound.value[j] = np.sum([gammaln(data.value[j][r] + pi_null.value[j] * tau_null.value[j]) \
-                + gammaln(data.total[j][r] - data.value[j][r] + (1 - pi_null.value[j]) * tau_null.value[j]) \
-                - gammaln(data.total[j][r] + tau_null.value[j]) + gammaln(tau_null.value[j]) \
-                - gammaln(pi_null.value[j] * tau_null.value[j]) - gammaln((1 - pi_null.value[j]) * tau_null.value[j]) \
-                for r in xrange(data.R)],0)
+    lhood_bound = np.sum([gammaln(data.left[:,:,r] + alpha) + \
+                  gammaln(data.total[:,:,r] - data.left[:,:,r] + beta) - \
+                  gammaln(data.total[:,:,r] + ttau) + gammaln(ttau) - \
+                  gammaln(alpha) - gammaln(beta) \
+                  for r in xrange(data.R)],0)
+
+    if model_type in ['msCentipede','msCentipede_flexbgmean']:
+        
+        lhood_unbound = np.sum(data.left,2) * utils.nplog(pi_null.value) + \
+                        (np.sum(data.total,2) - np.sum(data.left,2)) * \
+                        utils.nplog(1-pi_null.value)
+
+    elif model_type=='msCentipede_flexbg':
+
+        alpha = np.zeros((pi_null.L,), dtype='float')
+        beta = np.zeros((pi_null.L,), dtype='float')
+        ttau = np.zeros((pi_null.L,), dtype='float')
+        for j from 0 <= j < data.J:
+            start = 2**j-1
+            end = 2**(j+1)-1
+            alpha[start:end] = pi.value[start:end] * tau_null.value[j]
+            beta[start:end] = (1-pi.value[start:end]) * tau_null.value[j]
+            ttau[start:end] = tau_null.value[j]
+
+        lhood_unbound = np.sum([gammaln(data.left[:,:,r] + alpha) + \
+                        gammaln(data.total[:,:,r] - data.left[:,:,r] + beta) - \
+                        gammaln(data.total[:,:,r] + ttau) + gammaln(ttau) - \
+                        gammaln(alpha) - gammaln(beta) \
+                        for r in xrange(data.R)],0)
 
     return lhood_bound, lhood_unbound
-
 
 cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
@@ -233,50 +242,44 @@ cdef double likelihood(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
     cdef long j
     cdef double L
-    cdef np.ndarray apriori, footprint, null, P_1, P_0, LL
-    cdef Data lhoodA, lhoodB
+    cdef np.ndarray apriori, footprint, null, P_1, P_0, LL, pidx, nidx
 
     apriori = utils.insum(beta.value * scores,[1])
+    pidx = apriori>=0
+    nidx = apriori<0
+    L_prior = np.sum(apriori[nidx] * zeta.value[nidx]) - \
+              np.sum(apriori[pidx] * (1-zeta.value[pidx])) - \
+              np.sum(utils.nplog(1 + np.exp(-1*np.abs(apriori))))
 
     lhoodA, lhoodB = compute_footprint_likelihood(data, pi, tau, pi_null, tau_null, model_type)
 
-    footprint = np.zeros((data.N,1),dtype=float)
-    for j from 0 <= j < data.J:
-        footprint += utils.insum(lhoodA.value[j],[1])
+    footprint = utils.insum(lhoodA,[1])
 
     P_1 = footprint + utils.insum(gammaln(zeta.total + alpha.value[:,1]) - gammaln(alpha.value[:,1]) \
         + alpha.value[:,1] * utils.nplog(omega.value[:,1]) + zeta.total * utils.nplog(1 - omega.value[:,1]), [1])
     P_1[P_1==np.inf] = utils.MAX
     P_1[P_1==-np.inf] = -utils.MAX
 
-    null = np.zeros((data.N,1), dtype=float)
-    for j from 0 <= j < data.J:
-        null += utils.insum(lhoodB.value[j],[1])
+    null = utils.insum(lhoodB,[1])
 
     P_0 = null + utils.insum(gammaln(zeta.total + alpha.value[:,0]) - gammaln(alpha.value[:,0]) \
         + alpha.value[:,0] * utils.nplog(omega.value[:,0]) + zeta.total * utils.nplog(1 - omega.value[:,0]), [1])
     P_0[P_0==np.inf] = utils.MAX
     P_0[P_0==-np.inf] = -utils.MAX
 
-    LL = P_0 * zeta.value[:,:1] + utils.insum(P_1 * zeta.value[:,1:],[1]) + apriori * (1 - zeta.value[:,:1]) \
-        - utils.nplog(1 + np.exp(apriori)) - utils.insum(zeta.value * utils.nplog(zeta.value),[1])
+    LL = P_0 * (1-zeta.value) + \
+         P_1 * zeta.value - \
+         zeta.value * utils.nplog(zeta.value) - \
+         (1-zeta.value) * utils.nplog(1-zeta.value)
  
-    L = LL.sum() / data.N
-
-    if np.isnan(L):
-        print "Nan in LogLike"
-        return -np.inf
-
-    if np.isinf(L):
-        print "Inf in LogLike"
-        return -np.inf
+    L = (LL.sum() + L_prior) / data.N
 
     return L
 
 
 cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
-    Omega omega, Pi pi_null, Tau tau_null, str model_type):
+    Omega omega, Pi pi_null, Tau tau_null, long threads, str model_type):
     """This subroutine updates all model parameters once and computes an
     estimate of the posterior probability of binding.
 
@@ -313,6 +316,9 @@ cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
         tau_null : Tau or None
         estimate of cleavage heterogeneity at unbound sites
 
+        threads : int
+        number of threads to use while updating `pi` and `tau`
+
         model_type : string
         {msCentipede, msCentipede_flexbgmean, msCentipede_flexbg}
 
@@ -326,12 +332,13 @@ cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
     # update multi-scale parameters
     starttime = time.time()
-    tau.update(data, zeta, pi)
+    tau.update(data, zeta, pi, threads)
     print "tau update in %.3f secs"%(time.time()-starttime)
 
     starttime = time.time()
-    pi.update(data, zeta, tau)
+    pi.update(data, zeta, tau, threads)
     print "p_jk update in %.3f secs"%(time.time()-starttime)
+    print pi.value
 
     # update negative binomial parameters
     starttime = time.time()
@@ -350,7 +357,7 @@ cdef EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
 cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
     Zeta zeta, Pi pi, Tau tau, Alpha alpha, Beta beta, \
-    Omega omega, Pi pi_null, Tau tau_null, str model_type):
+    Omega omega, Pi pi_null, Tau tau_null, long threads, str model_type):
     """Accelerated update of model parameters and posterior probability of binding.
 
     Arguments
@@ -386,6 +393,9 @@ cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
         tau_null : Tau or None
         estimate of cleavage heterogeneity at unbound sites
 
+        threads : int
+        number of threads to run during execution
+
         model_type : string
         {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
 
@@ -407,7 +417,7 @@ cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
 
     # take two update steps
     for step in [0,1]:
-        EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model_type)
+        EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, threads, model_type)
         oldvar = []
         for parameter in parameters:
             try:
@@ -446,14 +456,14 @@ cdef square_EM(Data data, np.ndarray[np.float64_t, ndim=2] scores, \
         else:
             a_ok = True
 
-    EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, model_type)
+    EM(data, scores, zeta, pi, tau, alpha, beta, omega, pi_null, tau_null, threads, model_type)
 
 
 def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     np.ndarray[np.float64_t, ndim=2] totalreads, \
     np.ndarray[np.float64_t, ndim=2] scores, \
     np.ndarray[np.float64_t, ndim=3] background, \
-    str model, long restarts, double mintol):
+    str model_type, long threads, long restarts, double mintol):
     """Learn the model parameters by running an EM algorithm till convergence.
     Return the optimal parameter estimates from a number of EM results starting 
     from random restarts.
@@ -483,6 +493,9 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
         model : string
         {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
 
+        threads : int
+        number of threads to use during execution (default: 1)
+
         restarts : int
         number of independent runs of model learning
 
@@ -493,7 +506,7 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
 
     cdef long restart, iteration, err
     cdef double change, maxLoglike, Loglike, tol, itertime, totaltime
-    cdef np.ndarray oldtau, negbinmeans
+    cdef np.ndarray oldtau, negbinmeans, xmin
     cdef Data data, data_null
     cdef Beta beta
     cdef Alpha alpha
@@ -510,15 +523,13 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
 
     # set background model
     pi_null = Pi(data_null.J)
-    for j in xrange(pi_null.J):
-        pi_null.value[j] = np.sum(np.sum(data_null.value[j],0),0) / np.sum(np.sum(data_null.total[j],0),0).astype('float')
+    pi_null.value = np.sum(np.sum(data_null.left,2),0) / np.sum(np.sum(data_null.total,2),0).astype('float')
     
     tau_null = Tau(data_null.J)
-    if model=='msCentipede_flexbg':
+    if model_type=='msCentipede_flexbg':
 
         zeta_null = Zeta(background.sum(1), data_null.N, False)
-        zeta_null.value[:,1] = 1
-        zeta_null.value[:,0] = 0
+        zeta_null.value[:,0] = 1
 
         # iterative update of background model; 
         # evaluate convergence based on change in estimated
@@ -527,8 +538,8 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
         while change>1e-2:
             oldtau = tau_null.value.copy()
             
-            tau_null.update(data_null, zeta_null, pi_null)
-            pi_null.update(data_null, zeta_null, tau_null)
+            tau_null.update(data_null, zeta_null, pi_null, threads)
+            pi_null.update(data_null, zeta_null, tau_null, threads)
 
             change = np.abs(oldtau-tau_null.value).sum() / tau_null.J
 
@@ -542,28 +553,32 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
             totaltime = time.time()
             print "Restart %d ..."%(restart+1)
 
-            # initialize multi-scale model parameters
+            # instantiate multi-scale model parameters
             pi = Pi(data.J)
             tau = Tau(data.J)
 
-            # initialize negative binomial parameters
+            # instantiate negative binomial parameters
             alpha = Alpha(data.R)
             omega = Omega(data.R)
 
-            # initialize prior parameters
+            # instantiate prior parameters
             beta = Beta(scores)
 
-            # initialize posterior over latent variables
+            # instantiate posterior over latent variables
             zeta = Zeta(totalreads, data.N, False)
-            for j in xrange(pi.J):
-                pi.value[j] = np.sum(data.value[j][0] * zeta.value[:,1:],0) \
-                    / np.sum(data.total[j][0] * zeta.value[:,1:],0).astype('float')
-                pi.value[j][pi.value[j]<1e-10] = 1e-10
-                pi.value[j][pi.value[j]>1-1e-10] = 1-1e-10
+
+            # initialize footprint
+            pi.value = np.sum(np.sum(data.left,2) * zeta.value, 0) \
+                / np.sum(np.sum(data.total,2) * zeta.value, 0).astype('float')
+            pi.value[pi.value==0] = np.min(pi.value[pi.value!=0])
+            pi.value[pi.value==1] = np.max(pi.value[pi.value!=1])
+            tau.value = np.array([1./min([np.min(pi.value[2**j-1:2**(j+1)-1]), \
+                                     np.min(1-pi.value[2**j-1:2**(j+1)-1])]) \
+                                  for j in xrange(tau.J)]) + 1000 * np.random.rand(tau.J)
 
             # initial log likelihood of the model
             Loglike = likelihood(data, scores, zeta, pi, tau, \
-                    alpha, beta, omega, pi_null, tau_null, model)
+                    alpha, beta, omega, pi_null, tau_null, model_type)
             print Loglike
 
             tol = np.inf
@@ -573,10 +588,10 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
 
                 itertime = time.time()
                 EM(data, scores, zeta, pi, tau, \
-                        alpha, beta, omega, pi_null, tau_null, model)
+                        alpha, beta, omega, pi_null, tau_null, threads, model_type)
 
                 newLoglike = likelihood(data, scores, zeta, pi, tau, \
-                        alpha, beta, omega, pi_null, tau_null, model)
+                        alpha, beta, omega, pi_null, tau_null, model_type)
 
                 tol = newLoglike - Loglike
                 Loglike = newLoglike
@@ -594,9 +609,9 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
                 # choose these parameter estimates, if the likelihood is greater.
                 if Loglike>maxLoglike:
                     maxLoglikeres = Loglike
-                    if model in ['msCentipede','msCentipede_flexbgmean']:
+                    if model_type in ['msCentipede','msCentipede_flexbgmean']:
                         footprint_model = (pi, tau, pi_null)
-                    elif model=='msCentipede_flexbg':
+                    elif model_type=='msCentipede_flexbg':
                         footprint_model = (pi, tau, pi_null, tau_null)
                     count_model = (alpha, omega)
                     prior = beta
@@ -614,7 +629,7 @@ def estimate_optimal_model(np.ndarray[np.float64_t, ndim=3] reads, \
     return footprint_model, count_model, prior, runlog
 
 
-def infer_binding_posterior(reads, totalreads, scores, background, footprint, negbinparams, prior, model):
+def infer_binding_posterior(reads, totalreads, scores, background, footprint, negbinparams, prior, model_type):
     """Infer posterior probability of factor binding, given optimal model parameters.
 
     Arguments
@@ -650,7 +665,7 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
         prior : Beta
         estimate of weights in logistic function in the prior
 
-        model : string
+        model_type : string
         {msCentipede, msCentipede-flexbgmean, msCentipede-flexbg}
 
     """
@@ -680,7 +695,7 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
             / np.sum(np.sum(data_null.total[j],0),0).astype('float')
     tau_null = None
 
-    if model=='msCentipede_flexbg':
+    if model_type=='msCentipede_flexbg':
 
         tau_null = footprint[3]
 
@@ -705,7 +720,7 @@ def infer_binding_posterior(reads, totalreads, scores, background, footprint, ne
     zeta = Zeta(totalreads, data.N, True)
 
     zeta.infer(data, scores, pi, tau, alpha, beta, omega, \
-        pi_null, tau_null, model)
+        pi_null, tau_null, model_type)
     
     return zeta.posterior_log_odds, \
         zeta.prior_log_odds, zeta.footprint_log_likelihood_ratio, \

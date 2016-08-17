@@ -58,7 +58,8 @@ cdef class Alpha:
         x_final = optimizer.optimize(xo, self.function_gradient, self.function_gradient_hessian, args)
         self.value = x_final.reshape(self.R,2)
 
-    cdef tuple function_gradient(self, ndarray[np.float64_t, ndim=1] x, dict args):
+    @staticmethod
+    cdef tuple function_gradient(ndarray[np.float64_t, ndim=1] x, dict args):
         """Computes the likelihood function (only terms that contain 
             `alpha`), and its gradient
         """
@@ -73,20 +74,21 @@ cdef class Alpha:
         zetasum = args['zetasum']
 
         f = 0
-        Df = np.zeros((2*omega.R,), dtype='float')
+        Df = np.zeros((1,2*omega.R), dtype='float')
 
         for r from 0 <= r < omega.R:
             xzeta = zeta.total[:,r:r+1] + x[2*r:2*r+2]
-            f = f + np.sum(np.sum(gammaln(xzeta) * zeta.value, 0) - \
+            f = f - np.sum(np.sum(gammaln(xzeta) * zeta.value, 0) - \
                 gammaln(x[2*r:2*r+2]) * zetasum + \
                 zetasum * utils.nplog(omega.value[r]) * x[2*r:2*r+2])
-            Df[2*r:2*r+2] = np.sum(digamma(xzeta) * zeta.value, 0) - \
+            Df[0,2*r:2*r+2] = -1 * (np.sum(digamma(xzeta) * zeta.value, 0) - \
                             digamma(x[2*r:2*r+2]) * zetasum + \
-                            zetasum * utils.nplog(omega.value[r])
+                            zetasum * utils.nplog(omega.value[r]))
 
         return f, Df
 
-    cdef tuple function_gradient_hessian(self, ndarray[np.float64_t, ndim=1] x, dict args):
+    @staticmethod
+    cdef tuple function_gradient_hessian(ndarray[np.float64_t, ndim=1] x, dict args):
         """Computes part of the likelihood function that has
         terms containing `alpha`, and its gradient and hessian
         """
@@ -101,19 +103,19 @@ cdef class Alpha:
         zetasum = args['zetasum']
         
         f = 0
-        Df = np.zeros((2*omega.R,), dtype='float')
+        Df = np.zeros((1,2*omega.R), dtype='float')
         Hf = np.zeros((2*omega.R,), dtype='float')
 
         for r from 0 <= r < omega.R:
             xzeta = zeta.total[:,r:r+1] + x[2*r:2*r+2]
-            f = f + np.sum(np.sum(gammaln(xzeta) * zeta.value, 0) - \
+            f = f - np.sum(np.sum(gammaln(xzeta) * zeta.value, 0) - \
                 gammaln(x[2*r:2*r+2]) * zetasum + \
                 zetasum * utils.nplog(omega.value[r]) * x[2*r:2*r+2])
-            Df[2*r:2*r+2] = np.sum(digamma(xzeta) * zeta.value, 0) - \
+            Df[0,2*r:2*r+2] = -1 * (np.sum(digamma(xzeta) * zeta.value, 0) - \
                             digamma(x[2*r:2*r+2]) * zetasum + \
-                            zetasum * utils.nplog(omega.value[r])
-            Hf[2*r:2*r+2] = np.sum(polygamma(1, xzeta) * zeta.value, 0) \
-                - polygamma(1, x[2*r:2*r+2]) * zetasum
+                            zetasum * utils.nplog(omega.value[r]))
+            Hf[2*r:2*r+2] = -1 * (np.sum(polygamma(1, xzeta) * zeta.value, 0) \
+                - polygamma(1, x[2*r:2*r+2]) * zetasum)
        
         Hf = np.diag(Hf)
 

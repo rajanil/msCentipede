@@ -8,19 +8,22 @@ MAX = np.finfo(np.double).max
 
 # defining some simple functions
 
-cdef logistic(np.ndarray x):
+def logistic(np.ndarray x):
 
-    return 1./(1+np.exp(x))
+    y = x.copy()
+    y[x>0] = np.exp(-x[x>0])/(1+np.exp(-x[x>0]))
+    y[x<=0] = 1./(1+np.exp(x[x<=0]))
+    return y
 
-cdef insum(np.ndarray x, list axes):
+def insum(np.ndarray x, list axes):
 
     return np.apply_over_axes(np.sum,x,axes)
 
-cdef nplog(x):
+def nplog(x):
 
     return np.nan_to_num(np.log(x))
 
-cdef outsum(np.ndarray arr):
+def outsum(np.ndarray arr):
 
     """
     Fast summation over the 0-th axis.

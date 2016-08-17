@@ -1,4 +1,7 @@
 
+# base libraries
+import pdb
+
 # numerical libraries
 import numpy as np
 
@@ -10,7 +13,8 @@ from cvxopt import solvers
 import utils
 
 # suppress optimizer output
-solvers.options['show_progress'] = False
+solvers.options['show_progress'] = True
+solvers.options['maxiters'] = 500
 
 def optimize(xo, function_gradient, function_gradient_hessian, args):
     """Calls the appropriate nonlinear convex optimization solver 
@@ -55,12 +59,8 @@ def optimize(xo, function_gradient, function_gradient_hessian, args):
             # check for infs and nans in function and gradient
             if np.isnan(f) or np.isinf(f):
                 f = np.array([utils.MAX], dtype=float)
-            else:
-                f = -1*f.astype('float')
             if np.isnan(Df).any() or np.isinf(Df).any():
                 Df = -1 * utils.MAX * np.ones((1,xx.size), dtype=float)
-            else:
-                Df = -1 * Df
 
             return cvx.matrix(f), cvx.matrix(Df)
 
@@ -72,12 +72,8 @@ def optimize(xo, function_gradient, function_gradient_hessian, args):
             # check for infs and nans in function and gradient
             if np.isnan(f) or np.isinf(f):
                 f = np.array([utils.MAX], dtype=float)
-            else:
-                f = -1*f.astype('float')
             if np.isnan(Df).any() or np.isinf(Df).any():
                 Df = -1 * utils.MAX * np.ones((1,xx.size), dtype=float)
-            else:
-                Df = -1 * Df
 
             Hf = z[0] * Hf
             return cvx.matrix(f), cvx.matrix(Df), cvx.matrix(Hf)
@@ -102,12 +98,13 @@ def optimize(xo, function_gradient, function_gradient_hessian, args):
         else:
             # if optimizer didn't converge,
             # skip this current optimization step. 
-            x_final = x_o
+            x_final = xo
 
-    except ValueError:
+    except:
 
         # if any parameter becomes Inf or Nan during optimization,
         # skip this current optimization step.
-        x_final = x_o
+        pdb.set_trace()
+        x_final = xo
 
     return x_final
